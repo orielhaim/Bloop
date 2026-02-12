@@ -1,4 +1,4 @@
-const API_URL = "http://localhost:3000";
+const API_URL = "http://localhost:3000/api";
 
 export async function issueNumber() {
   const res = await fetch(`${API_URL}/admin/issue-number`, {

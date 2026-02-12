@@ -1,60 +1,62 @@
 import { Hono } from "hono";
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 import { db } from "../db";
 
 const auth = new Hono();
 
-auth.post("/challenge", async (c) => {
-  const body = await c.req.json();
-  // We don't really use body.number for generating challenge, but it's in the request spec.
-  // "Always return a challenge even if the number doesn't exist"
+const challengeSchema = z.object({
+  number: z.string().optional()
+}).passthrough();
 
+auth.post("/challenge", zValidator("json", challengeSchema), async (c) => {
   const challengeId = crypto.randomUUID();
   const challengeBytes = new Uint8Array(32);
   crypto.getRandomValues(challengeBytes);
   const challenge = Buffer.from(challengeBytes).toString('hex');
-  
+
   const expiresAt = Date.now() + 60 * 1000; // 60 seconds
-  
+
   db.run("INSERT INTO challenges (id, challenge, expires_at) VALUES (?, ?, ?)", [challengeId, challenge, expiresAt]);
-  
+
   return c.json({
     challengeId,
     challenge
   });
 });
 
-auth.post("/verify", async (c) => {
-  const body = await c.req.json();
-  const { challengeId, number, signature } = body;
-  
+const verifySchema = z.object({
+  challengeId: z.string(),
+  number: z.string(),
+  signature: z.string()
+});
+
+auth.post("/verify", zValidator("json", verifySchema), async (c) => {
+  const { challengeId, number, signature } = c.req.valid("json");
+
   const errorResponse = { error: "invalid" };
-  
-  // 1. Look up challenge
+
   const challengeEntry = db.query("SELECT * FROM challenges WHERE id = ?").get(challengeId) as { id: string, challenge: string, expires_at: number } | null;
-  
+
   if (!challengeEntry) {
     return c.json(errorResponse, 400);
   }
-  
-  // Delete challenge (one-time use)
+
   db.run("DELETE FROM challenges WHERE id = ?", [challengeId]);
-  
-  // Check expiry
+
   if (Date.now() > challengeEntry.expires_at) {
     return c.json(errorResponse, 400);
   }
-  
-  // 2. Look up number
-  const numberEntry = db.query("SELECT * FROM numbers WHERE number = ?").get(number) as { number: string, signing_key: string } | null;
-  
-  if (!numberEntry) {
+
+  const numberEntry = db.query("SELECT * FROM numbers WHERE number = ?").get(number) as { number: string, signing_key: string, status: string } | null;
+
+  if (!numberEntry || numberEntry.status !== 'active') {
     return c.json(errorResponse, 400);
   }
-  
-  // 3. Import public key and verify
+
   try {
     const jwk = JSON.parse(numberEntry.signing_key);
-    
+
     const key = await crypto.subtle.importKey(
       "jwk",
       jwk,
@@ -62,17 +64,17 @@ auth.post("/verify", async (c) => {
       true,
       ["verify"]
     );
-    
+
     const signatureBytes = Uint8Array.from(Buffer.from(signature, 'hex'));
     const dataBytes = new TextEncoder().encode(challengeEntry.challenge);
-    
+
     const isValid = await crypto.subtle.verify(
       "Ed25519",
       key,
       signatureBytes,
       dataBytes
     );
-    
+
     if (isValid) {
       return c.json({ verified: true, number });
     } else {

@@ -1,53 +1,57 @@
 import { Hono } from "hono";
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 import { db } from "../db";
 
 const activate = new Hono();
 
-activate.post("/", async (c) => {
-  const body = await c.req.json();
-  const { code, signingKey, encryptionKey } = body;
+const activateSchema = z.object({
+  code: z.string(),
+  signingKey: z.object({
+    kty: z.literal("OKP"),
+    crv: z.literal("Ed25519"),
+    x: z.string()
+  }).passthrough(),
+  encryptionKey: z.object({
+    kty: z.literal("OKP"),
+    crv: z.literal("X25519"),
+    x: z.string()
+  }).passthrough()
+});
+
+activate.post("/", zValidator("json", activateSchema), async (c) => {
+  const { code, signingKey, encryptionKey } = c.req.valid("json");
 
   const errorResponse = { error: "invalid_code" };
 
-  // 1. Look up code
   const activation = db.query("SELECT * FROM activation_codes WHERE code = ?").get(code) as { code: string, number: string, expires_at: number } | null;
 
   if (!activation) {
-    return c.json(errorResponse, 400); // Or 200 with error field as per spec? Spec says "Response (any failure): { error: 'invalid_code' }". Doesn't specify status code, but usually 400 or 200. I'll stick to returning JSON.
+    return c.json(errorResponse, 400);
   }
 
-  // 2. Check expiry
   if (Date.now() > activation.expires_at) {
     db.run("DELETE FROM activation_codes WHERE code = ?", [code]);
     return c.json(errorResponse, 400);
   }
 
-  // 3. Check if number already in numbers table (shouldn't happen if we manage activation codes correctly, but good check)
-  const existingNumber = db.query("SELECT number FROM numbers WHERE number = ?").get(activation.number);
-  if (existingNumber) {
+  const numberEntry = db.query("SELECT status FROM numbers WHERE number = ?").get(activation.number) as { status: string } | null;
+
+  if (!numberEntry || numberEntry.status !== 'waiting') {
     return c.json(errorResponse, 400);
   }
 
-  // 4. Validate signingKey
-  if (!isValidKey(signingKey, "Ed25519")) {
-    return c.json(errorResponse, 400);
-  }
-
-  // 5. Validate encryptionKey
-  if (!isValidKey(encryptionKey, "X25519")) {
-    return c.json(errorResponse, 400);
-  }
-
-  // 6. Insert into numbers
   try {
-    db.run("INSERT INTO numbers (number, signing_key, encryption_key) VALUES (?, ?, ?)", [
-      activation.number,
-      JSON.stringify(signingKey),
-      JSON.stringify(encryptionKey)
-    ]);
+    const updateTransaction = db.transaction(() => {
+      db.run("UPDATE numbers SET signing_key = ?, encryption_key = ?, status = 'active' WHERE number = ?", [
+        JSON.stringify(signingKey),
+        JSON.stringify(encryptionKey),
+        activation.number
+      ]);
+      db.run("DELETE FROM activation_codes WHERE code = ?", [code]);
+    });
 
-    // 7. Delete from activation_codes
-    db.run("DELETE FROM activation_codes WHERE code = ?", [code]);
+    updateTransaction();
 
     return c.json({ number: activation.number });
   } catch (e) {
@@ -55,14 +59,5 @@ activate.post("/", async (c) => {
     return c.json(errorResponse, 500);
   }
 });
-
-function isValidKey(key: any, crv: string): boolean {
-  if (!key || typeof key !== 'object') return false;
-  if (key.kty !== 'OKP') return false;
-  if (key.crv !== crv) return false;
-  if (typeof key.x !== 'string') return false;
-  // Basic base64url check?
-  return true;
-}
 
 export default activate;

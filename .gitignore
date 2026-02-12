@@ -5,3 +5,4 @@ dist
 *.db
 *.sqlite
 bun.lock
+server/data/*
