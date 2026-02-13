@@ -39,33 +39,37 @@ export default function Unlock({ onUnlock }) {
   };
 
   return (
-    <div className="card bg-base-200 shadow-xl max-w-md mx-auto">
-      <div className="card-body">
-        <h2 className="card-title text-2xl mb-4">Welcome Back</h2>
-        <p className="mb-4">Enter your password to unlock your vault.</p>
-        
-        <input 
-          type="password" 
-          className="input input-bordered w-full" 
-          placeholder="Password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleUnlock()}
-          autoFocus
-        />
-
-        <div className="card-actions justify-end mt-6">
-          <button 
-            className="btn btn-primary" 
-            onClick={handleUnlock}
-            disabled={isPending || !password}
-          >
-            {isPending ? <span className="loading loading-spinner"></span> : 'Unlock'}
-          </button>
+    <div className="min-h-screen flex items-center justify-center bg-base-100 px-4">
+      <div className="card bg-base-100 border border-base-200 shadow-md w-full max-w-md">
+        <div className="card-body gap-5">
+          <div className="flex items-center gap-3">
+            <div className="h-11 w-11 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-lg font-semibold">B</div>
+            <div>
+              <div className="text-xl font-semibold">Welcome Back</div>
+              <div className="text-sm text-base-content/60">Unlock your secure vault.</div>
+            </div>
+          </div>
+          <input
+            type="password"
+            className="input input-bordered w-full"
+            placeholder="Password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleUnlock()}
+            autoFocus
+          />
+          <div className="card-actions justify-end">
+            <button
+              className="btn btn-primary"
+              onClick={handleUnlock}
+              disabled={isPending || !password}
+            >
+              {isPending ? <span className="loading loading-spinner"></span> : 'Unlock'}
+            </button>
+          </div>
+          {status && <div className="text-info text-sm text-center">{status}</div>}
+          {error && <div className="alert alert-error">{error}</div>}
         </div>
-        
-        {status && <div className="text-info mt-4 text-center">{status}</div>}
-        {error && <div className="alert alert-error mt-4">{error}</div>}
       </div>
     </div>
   );

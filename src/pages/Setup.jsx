@@ -56,125 +56,145 @@ export default function Setup({ onComplete }) {
 
   if (step === 'input') {
     return (
-      <div className="card bg-base-200 shadow-xl max-w-md mx-auto">
-        <div className="card-body">
-          <h2 className="card-title text-2xl mb-4">Device Setup</h2>
-          
-          <div className="form-control">
-            <label className="label">
-              <span className="label-text">Phone Number</span>
-            </label>
-            <div className="flex gap-2">
-              <input 
-                type="text" 
-                className="input input-bordered flex-1" 
-                value={number}
-                onChange={e => setNumber(e.target.value)}
-                placeholder="Number"
-              />
-              <button className="btn btn-outline" onClick={handleIssue} type="button">
-                Get New
+      <div className="min-h-screen flex items-center justify-center bg-base-100 px-4">
+        <div className="card bg-base-100 border border-base-200 shadow-md w-full max-w-lg">
+          <div className="card-body gap-6">
+            <div className="flex items-center gap-3">
+              <div className="h-11 w-11 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-lg font-semibold">B</div>
+              <div>
+                <div className="text-xl font-semibold">Device Setup</div>
+                <div className="text-sm text-base-content/60">Create your secure calling identity.</div>
+              </div>
+            </div>
+            <div className="grid gap-4">
+              <div className="form-control">
+                <label className="label">
+                  <span className="label-text">Phone Number</span>
+                </label>
+                <div className="join w-full">
+                  <input
+                    type="text"
+                    className="input input-bordered join-item w-full"
+                    value={number}
+                    onChange={e => setNumber(e.target.value)}
+                    placeholder="Number"
+                  />
+                  <button className="btn btn-outline join-item" onClick={handleIssue} type="button">
+                    Get New
+                  </button>
+                </div>
+              </div>
+              <div className="form-control">
+                <label className="label">
+                  <span className="label-text">Activation Code</span>
+                </label>
+                <input
+                  type="text"
+                  className="input input-bordered"
+                  value={code}
+                  onChange={e => setCode(e.target.value)}
+                  placeholder="Code"
+                />
+              </div>
+            </div>
+            <div className="card-actions justify-end">
+              <button
+                className="btn btn-primary"
+                disabled={!number || !code}
+                onClick={() => setStep('mode')}
+              >
+                Continue
               </button>
             </div>
+            {error && <div className="alert alert-error">{error}</div>}
           </div>
-
-          <div className="form-control mt-4">
-            <label className="label">
-              <span className="label-text">Activation Code</span>
-            </label>
-            <input 
-              type="text" 
-              className="input input-bordered" 
-              value={code}
-              onChange={e => setCode(e.target.value)}
-              placeholder="Code"
-            />
-          </div>
-
-          <div className="card-actions justify-end mt-6">
-            <button 
-              className="btn btn-primary" 
-              disabled={!number || !code}
-              onClick={() => setStep('mode')}
-            >
-              Next
-            </button>
-          </div>
-          {error && <div className="alert alert-error mt-4">{error}</div>}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="card bg-base-200 shadow-xl max-w-md mx-auto">
-      <div className="card-body">
-        <h2 className="card-title text-2xl mb-4">Security Mode</h2>
-        
-        <div className="form-control">
-          <label className="label cursor-pointer justify-start gap-4">
-            <input 
-              type="radio" 
-              name="mode" 
-              className="radio radio-primary" 
-              checked={mode === 'silent'} 
-              onChange={() => setMode('silent')} 
-            />
-            <span className="label-text font-bold">Silent Mode</span>
-          </label>
-          <p className="text-xs opacity-70 ml-10 mb-4">
-            Keys are stored on device. Unlocks automatically. Convenient but less secure if device is stolen.
-          </p>
-        </div>
-
-        <div className="form-control">
-          <label className="label cursor-pointer justify-start gap-4">
-            <input 
-              type="radio" 
-              name="mode" 
-              className="radio radio-primary" 
-              checked={mode === 'password'} 
-              onChange={() => setMode('password')} 
-            />
-            <span className="label-text font-bold">Password Mode</span>
-          </label>
-          <p className="text-xs opacity-70 ml-10 mb-4">
-            Keys encrypted with password. Must enter password to unlock. High security.
-          </p>
-        </div>
-
-        {mode === 'password' && (
-          <div className="ml-10 space-y-4 animate-in fade-in slide-in-from-top-4 duration-300">
-            <input 
-              type="password" 
-              className="input input-bordered w-full" 
-              placeholder="Create Password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-            />
-            <input 
-              type="password" 
-              className="input input-bordered w-full" 
-              placeholder="Confirm Password"
-              value={confirmPassword}
-              onChange={e => setConfirmPassword(e.target.value)}
-            />
+    <div className="min-h-screen flex items-center justify-center bg-base-100 px-4">
+      <div className="card bg-base-100 border border-base-200 shadow-md w-full max-w-lg">
+        <div className="card-body gap-6">
+          <div className="flex items-center gap-3">
+            <div className="h-11 w-11 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-lg font-semibold">B</div>
+            <div>
+              <div className="text-xl font-semibold">Security Mode</div>
+              <div className="text-sm text-base-content/60">Choose how your vault unlocks.</div>
+            </div>
           </div>
-        )}
+          <div className="grid gap-4">
+            <label className={`card border ${mode === 'silent' ? 'border-primary' : 'border-base-200'} bg-base-100 shadow-sm cursor-pointer`}>
+              <div className="card-body flex-row items-start gap-4">
+                <input
+                  type="radio"
+                  name="mode"
+                  className="radio radio-primary mt-1"
+                  checked={mode === 'silent'}
+                  onChange={() => setMode('silent')}
+                />
+                <div>
+                  <div className="font-semibold">Silent Mode</div>
+                  <div className="text-xs text-base-content/60">
+                    Unlocks automatically on trusted devices. Quick access, lower protection.
+                  </div>
+                </div>
+              </div>
+            </label>
 
-        <div className="card-actions justify-between mt-8">
-          <button className="btn btn-ghost" onClick={() => setStep('input')}>
-            Back
-          </button>
-          <button 
-            className="btn btn-primary" 
-            onClick={handleActivateAndSetup}
-            disabled={isPending}
-          >
-            {isPending ? <span className="loading loading-spinner"></span> : 'Activate & Setup'}
-          </button>
+            <label className={`card border ${mode === 'password' ? 'border-primary' : 'border-base-200'} bg-base-100 shadow-sm cursor-pointer`}>
+              <div className="card-body flex-row items-start gap-4">
+                <input
+                  type="radio"
+                  name="mode"
+                  className="radio radio-primary mt-1"
+                  checked={mode === 'password'}
+                  onChange={() => setMode('password')}
+                />
+                <div>
+                  <div className="font-semibold">Password Mode</div>
+                  <div className="text-xs text-base-content/60">
+                    Requires a password to unlock your vault. Stronger protection.
+                  </div>
+                </div>
+              </div>
+            </label>
+          </div>
+
+          {mode === 'password' && (
+            <div className="grid gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
+              <input
+                type="password"
+                className="input input-bordered w-full"
+                placeholder="Create Password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+              />
+              <input
+                type="password"
+                className="input input-bordered w-full"
+                placeholder="Confirm Password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+              />
+            </div>
+          )}
+
+          <div className="card-actions justify-between">
+            <button className="btn btn-ghost" onClick={() => setStep('input')}>
+              Back
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={handleActivateAndSetup}
+              disabled={isPending}
+            >
+              {isPending ? <span className="loading loading-spinner"></span> : 'Activate & Setup'}
+            </button>
+          </div>
+          {error && <div className="alert alert-error">{error}</div>}
         </div>
-        {error && <div className="alert alert-error mt-4">{error}</div>}
       </div>
     </div>
   );

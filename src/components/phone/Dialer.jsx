@@ -60,20 +60,19 @@ export default function Dialer() {
 
   return (
     <div className="flex flex-col h-full w-full max-w-sm mx-auto pb-8">
-      
-      {/* Number Display */}
+
       <div className="flex-1 flex flex-col justify-end items-center mb-8 px-4">
+
+        {target.length === 0 ? <span className="text-sm opacity-50 mt-2">Enter number</span> :
         <input
           type="text"
           readOnly
           value={target}
           className="bg-transparent text-center text-4xl font-light w-full focus:outline-none"
           placeholder=""
-        />
-        {target.length === 0 && <span className="text-sm opacity-50 mt-2">Enter number</span>}
+        />}
       </div>
 
-      {/* Keypad */}
       <div className="grid grid-cols-3 gap-4 px-8 mb-8">
         {keys.map((key) => (
           <button
@@ -87,10 +86,8 @@ export default function Dialer() {
         ))}
       </div>
 
-      {/* Actions */}
       <div className="flex justify-center items-center gap-8 px-8 h-20">
         <div className="w-16">
-            {/* Spacer to center the call button */}
         </div>
 
         <button
@@ -105,15 +102,15 @@ export default function Dialer() {
           )}
         </button>
 
-        <div className="w-16 flex justify-center">
-            {target.length > 0 && (
-                <button 
-                    onClick={handleBackspace}
-                    className="btn btn-ghost btn-circle"
-                >
-                    <FaDeleteLeft className="w-8 h-8 opacity-70" />
-                </button>
-            )}
+        <div className="w-18 flex justify-center">
+          {target.length > 0 && (
+            <button
+              onClick={handleBackspace}
+              className="btn btn-ghost btn-circle h-15 w-15"
+            >
+              <FaDeleteLeft className="w-8 h-8 opacity-70" />
+            </button>
+          )}
         </div>
       </div>
     </div>

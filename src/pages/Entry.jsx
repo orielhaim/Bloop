@@ -67,9 +67,15 @@ export default function Entry() {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[50vh]">
-        <span className="loading loading-spinner loading-lg"></span>
-        <p className="mt-4 text-opacity-60">Initializing secure vault...</p>
+      <div className="min-h-screen flex items-center justify-center bg-base-100 px-4">
+        <div className="card bg-base-200 border border-base-300 shadow-sm w-full max-w-md">
+          <div className="card-body items-center text-center gap-3">
+            <div className="h-12 w-12 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-xl font-semibold">B</div>
+            <div className="text-lg font-semibold">Initializing Bloop</div>
+            <div className="text-sm text-base-content/60">Securing your vault and preparing the call stack.</div>
+            <span className="loading loading-spinner loading-md"></span>
+          </div>
+        </div>
       </div>
     );
   }
@@ -81,13 +87,16 @@ export default function Entry() {
 
   if (error) {
     return (
-      <div className="flex flex-col gap-4 max-w-md mx-auto mt-10">
-        <div className="alert alert-error">
-          <span>{error}</span>
-        </div>
-        <div className="flex justify-center gap-4">
-          <button className="btn btn-outline" onClick={() => window.location.reload()}>Retry</button>
-          <button className="btn btn-error btn-outline" onClick={handleReset}>Reset Vault</button>
+      <div className="min-h-screen flex items-center justify-center bg-base-100 px-4">
+        <div className="card bg-base-100 border border-base-200 shadow-md w-full max-w-md">
+          <div className="card-body gap-4">
+            <div className="text-xl font-semibold">Vault Error</div>
+            <div className="alert alert-error">{error}</div>
+            <div className="grid grid-cols-2 gap-2">
+              <button className="btn btn-outline" onClick={() => window.location.reload()}>Retry</button>
+              <button className="btn btn-error btn-outline" onClick={handleReset}>Reset Vault</button>
+            </div>
+          </div>
         </div>
       </div>
     );

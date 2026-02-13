@@ -3,6 +3,7 @@ import { useCallStore } from '../../store/callStore';
 import { startCallSession } from '../../services/callService';
 import { FaMicrophone, FaMicrophoneSlash, FaPhoneSlash } from "react-icons/fa6";
 import { IoKeypad } from "react-icons/io5";
+import { getContactByNumber, getContactDisplayName } from '../../services/contactsManager';
 
 export default function InCall() {
   const { callRoom, callPassword, callState, targetNumber, callerNumber } = useCallStore();
@@ -12,12 +13,13 @@ export default function InCall() {
   const [status, setStatus] = useState('Connecting...');
   const [isMuted, setIsMuted] = useState(false);
   const [showKeypad, setShowKeypad] = useState(false);
+  const [contactName, setContactName] = useState(null);
   
   const localStreamRef = useRef(null);
   const localAudioRef = useRef(null);
   const remoteAudioRef = useRef(null);
 
-  const peerName = targetNumber || callerNumber;
+  const peerName = contactName || targetNumber || callerNumber;
   const isConnected = status === 'Connected';
 
   useEffect(() => {
@@ -54,6 +56,25 @@ export default function InCall() {
       });
   }, [callRoom, callPassword]);
 
+  useEffect(() => {
+    let active = true;
+    const number = targetNumber || callerNumber;
+    if (!number) {
+      setContactName(null);
+      return;
+    }
+    getContactByNumber(number)
+      .then((contact) => {
+        if (active) setContactName(contact ? getContactDisplayName(contact) : null);
+      })
+      .catch(() => {
+        if (active) setContactName(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [targetNumber, callerNumber]);
+
   const toggleMute = () => {
     if (localStreamRef.current) {
       localStreamRef.current.getAudioTracks().forEach(track => {
@@ -72,97 +93,87 @@ export default function InCall() {
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 
   return (
-    <div className="fixed inset-0 z-50 bg-linear-to-b from-base-100 to-base-200 flex flex-col items-center justify-between py-12 px-8">
-      
-      {/* Hidden Audio Elements */}
+    <div className="fixed inset-0 z-50 bg-linear-to-b from-base-200 to-base-100 flex flex-col items-center justify-between py-12 px-6">
       <audio ref={localAudioRef} muted autoPlay />
       <audio ref={remoteAudioRef} autoPlay />
 
-      {/* Header Info */}
-      <div className="flex-1 flex flex-col items-center justify-start pt-12 w-full">
-         <div className="flex flex-col items-center gap-4">
-           <div className="avatar placeholder">
-              <div className="bg-neutral-focus text-neutral-content rounded-full w-24 h-24 flex items-center justify-center shadow-lg">
-                <span className="text-3xl font-bold">{peerName?.[0] || '#'}</span>
-              </div>
-           </div>
-           
-           <h1 className="text-4xl font-bold tracking-wider">{peerName}</h1>
-           <p className="text-lg opacity-70 font-mono">
-             {isConnected ? formatTime(duration) : (callState === 'calling' ? 'Calling...' : status)}
-           </p>
-         </div>
-
-         {/* Optional Keypad Overlay */}
-         {showKeypad && (
-            <div className="mt-8 grid grid-cols-3 gap-4 animate-fade-in bg-base-100 p-4 rounded-3xl shadow-2xl z-10 absolute bottom-32">
-              {keys.map(key => (
-                <button 
-                  key={key} 
-                  className="btn btn-circle btn-lg bg-base-200 border-none text-2xl font-medium hover:bg-base-300"
-                >
-                  {key}
-                </button>
-              ))}
-              <div className="col-span-3 flex justify-center mt-2">
-                 <button className="btn btn-ghost btn-sm" onClick={() => setShowKeypad(false)}>Hide</button>
-              </div>
-            </div>
-         )}
+      <div className="flex-1 flex flex-col items-center justify-start pt-10 w-full text-center">
+        <div className="avatar placeholder">
+          <div className="bg-base-200 text-base-content rounded-full w-24 h-24 flex items-center justify-center shadow-lg">
+            <span className="text-3xl font-semibold">{peerName?.[0] || '#'}</span>
+          </div>
+        </div>
+        <div className="mt-5 space-y-2">
+          <div className="text-3xl font-semibold">{peerName}</div>
+          {contactName && <div className="text-xs text-base-content/60 font-mono">{targetNumber || callerNumber}</div>}
+          <div className="text-sm text-base-content/70 font-mono">
+            {isConnected ? formatTime(duration) : (callState === 'calling' ? 'Calling...' : status)}
+          </div>
+        </div>
       </div>
 
-      {/* Controls */}
-      <div className="w-full max-w-sm mb-12">
+      {showKeypad && (
+        <div className="grid grid-cols-3 gap-3 bg-base-100 p-4 rounded-3xl shadow-2xl absolute bottom-32">
+          {keys.map(key => (
+            <button
+              key={key}
+              className="btn btn-circle btn-lg bg-base-200 border-none text-2xl font-medium hover:bg-base-300"
+            >
+              {key}
+            </button>
+          ))}
+          <div className="col-span-3 flex justify-center">
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowKeypad(false)}>Hide</button>
+          </div>
+        </div>
+      )}
+
+      <div className="w-full max-w-sm pb-10">
         {isConnected ? (
-           <div className="grid grid-cols-3 gap-8 items-center">
-              {/* Mute Button */}
-              <div className="flex flex-col items-center gap-2">
-                <button 
-                  className={`btn btn-circle btn-lg w-16 h-16 shadow-lg border-none ${isMuted ? 'bg-white text-black hover:bg-gray-200' : 'bg-base-300 text-base-content hover:bg-base-content/20'}`}
-                  onClick={toggleMute}
-                >
-                  {isMuted ? <FaMicrophoneSlash className="w-6 h-6" /> : <FaMicrophone className="w-6 h-6" />}
-                </button>
-                <span className="text-xs opacity-70 font-medium">Mute</span>
-              </div>
+          <div className="grid grid-cols-3 gap-6 items-center">
+            <div className="flex flex-col items-center gap-2">
+              <button
+                className={`btn btn-circle btn-lg w-16 h-16 shadow-lg border-none ${isMuted ? 'bg-base-100 text-base-content' : 'bg-base-200 text-base-content'}`}
+                onClick={toggleMute}
+              >
+                {isMuted ? <FaMicrophoneSlash className="w-6 h-6" /> : <FaMicrophone className="w-6 h-6" />}
+              </button>
+              <span className="text-xs text-base-content/70 font-medium">Mute</span>
+            </div>
 
-              {/* Hangup Button */}
-              <div className="flex flex-col items-center gap-2">
-                 <button 
-                  className="btn btn-error btn-circle btn-lg w-20 h-20 shadow-xl border-4 border-base-100 scale-110 hover:scale-125 transition-transform"
-                  onClick={hangUp}
-                >
-                   <FaPhoneSlash className="w-8 h-8 text-white" />
-                </button>
-              </div>
+            <div className="flex flex-col items-center gap-2">
+              <button
+                className="btn btn-error btn-circle btn-lg w-20 h-20 shadow-xl"
+                onClick={hangUp}
+              >
+                <FaPhoneSlash className="w-8 h-8 text-white" />
+              </button>
+            </div>
 
-              {/* Keypad Toggle */}
-              <div className="flex flex-col items-center gap-2">
-                 <button 
-                  className={`btn btn-circle btn-lg w-16 h-16 shadow-lg border-none ${showKeypad ? 'bg-white text-black hover:bg-gray-200' : 'bg-base-300 text-base-content hover:bg-base-content/20'}`}
-                  onClick={() => setShowKeypad(!showKeypad)}
-                >
-                   <IoKeypad className="w-6 h-6" />
-                </button>
-                <span className="text-xs opacity-70 font-medium">Keypad</span>
-              </div>
-           </div>
+            <div className="flex flex-col items-center gap-2">
+              <button
+                className={`btn btn-circle btn-lg w-16 h-16 shadow-lg border-none ${showKeypad ? 'bg-base-100 text-base-content' : 'bg-base-200 text-base-content'}`}
+                onClick={() => setShowKeypad(!showKeypad)}
+              >
+                <IoKeypad className="w-6 h-6" />
+              </button>
+              <span className="text-xs text-base-content/70 font-medium">Keypad</span>
+            </div>
+          </div>
         ) : (
-           <div className="flex justify-center items-center">
-              {/* Centered Hangup Button when not connected */}
-              <div className="flex flex-col items-center gap-2">
-                 <button 
-                  className="btn btn-error btn-circle btn-lg w-20 h-20 shadow-xl border-4 border-base-100 hover:scale-110 transition-transform"
-                  onClick={hangUp}
-                >
-                   <FaPhoneSlash className="w-8 h-8 text-white" />
-                </button>
-                 <span className="text-xs opacity-70 font-medium">End Call</span>
-              </div>
-           </div>
+          <div className="flex justify-center items-center">
+            <div className="flex flex-col items-center gap-2">
+              <button
+                className="btn btn-error btn-circle btn-lg w-20 h-20 shadow-xl"
+                onClick={hangUp}
+              >
+                <FaPhoneSlash className="w-8 h-8 text-white" />
+              </button>
+              <span className="text-xs text-base-content/70 font-medium">End Call</span>
+            </div>
+          </div>
         )}
       </div>
-
     </div>
   );
 }

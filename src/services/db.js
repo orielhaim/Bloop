@@ -1,7 +1,9 @@
 const DB_NAME = 'VaultDB';
-const DB_VERSION = 1;
+const DB_VERSION = 3;
 const STORE_KEYS = 'keys';
 const STORE_META = 'meta';
+const STORE_HISTORY = 'history';
+const STORE_CONTACTS = 'contacts';
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -17,6 +19,12 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains(STORE_META)) {
         db.createObjectStore(STORE_META);
+      }
+      if (!db.objectStoreNames.contains(STORE_HISTORY)) {
+        db.createObjectStore(STORE_HISTORY);
+      }
+      if (!db.objectStoreNames.contains(STORE_CONTACTS)) {
+        db.createObjectStore(STORE_CONTACTS);
       }
     };
   });
@@ -61,12 +69,16 @@ async function remove(storeName, key) {
 async function clear() {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_KEYS, STORE_META], 'readwrite');
+    const transaction = db.transaction([STORE_KEYS, STORE_META, STORE_HISTORY, STORE_CONTACTS], 'readwrite');
     const keysStore = transaction.objectStore(STORE_KEYS);
     const metaStore = transaction.objectStore(STORE_META);
+    const historyStore = transaction.objectStore(STORE_HISTORY);
+    const contactsStore = transaction.objectStore(STORE_CONTACTS);
     
     keysStore.clear();
     metaStore.clear();
+    historyStore.clear();
+    contactsStore.clear();
     
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
@@ -83,6 +95,16 @@ export const db = {
     get: (key) => get(STORE_META, key),
     put: (key, value) => put(STORE_META, key, value),
     remove: (key) => remove(STORE_META, key),
+  },
+  history: {
+    get: (key) => get(STORE_HISTORY, key),
+    put: (key, value) => put(STORE_HISTORY, key, value),
+    remove: (key) => remove(STORE_HISTORY, key),
+  },
+  contacts: {
+    get: (key) => get(STORE_CONTACTS, key),
+    put: (key, value) => put(STORE_CONTACTS, key, value),
+    remove: (key) => remove(STORE_CONTACTS, key),
   },
   clear,
 };

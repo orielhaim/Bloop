@@ -8,7 +8,7 @@ Bloop is a proof-of-concept that reimagines how phone calls could work. You get 
 
 ---
 
-## How It Works (The Short Version)
+## How It Works
 
 1. You get a **phone number** and an **activation code** (think of it like buying a SIM card)
 2. Your device generates cryptographic key pairs - your identity lives on *your* device, not on a server
