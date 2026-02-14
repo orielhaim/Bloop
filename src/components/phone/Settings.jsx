@@ -11,8 +11,12 @@ import {
   IoLogOutOutline, 
   IoChevronForward,
   IoColorPaletteOutline,
-  IoSunnyOutline
+  IoSunnyOutline,
+  IoGlobeOutline,
+  IoAdd,
+  IoTrash
 } from 'react-icons/io5';
+import { getSettings, saveSettings } from '../../services/settings';
 
 export default function Settings({ currentMode, setCurrentMode, myKeys, number }) {
   const [view, setView] = useState('main'); // main, display, security, keys
@@ -61,6 +65,22 @@ export default function Settings({ currentMode, setCurrentMode, myKeys, number }
                 <div className="text-left">
                   <div className="font-medium">Display</div>
                   <div className="text-xs text-base-content/60">Theme, colors</div>
+                </div>
+              </div>
+              <IoChevronForward className="text-base-content/30" />
+            </button>
+
+            <button 
+              className="w-full flex items-center justify-between p-4 hover:bg-base-200/50 transition-colors border-b border-base-200 last:border-0"
+              onClick={() => setView('communication')}
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400">
+                  <IoGlobeOutline className="h-5 w-5" />
+                </div>
+                <div className="text-left">
+                  <div className="font-medium">Communication</div>
+                  <div className="text-xs text-base-content/60">Nostr, TURN servers</div>
                 </div>
               </div>
               <IoChevronForward className="text-base-content/30" />
@@ -136,6 +156,157 @@ export default function Settings({ currentMode, setCurrentMode, myKeys, number }
         {view === 'display' && <DisplaySettings />}
         {view === 'security' && <SecuritySettings currentMode={currentMode} setCurrentMode={setCurrentMode} />}
         {view === 'keys' && <KeySettings myKeys={myKeys} />}
+        {view === 'communication' && <CommunicationSettings />}
+      </div>
+    </div>
+  );
+}
+
+function CommunicationSettings() {
+  const [settings, setSettings] = useState(null);
+  const [newRelay, setNewRelay] = useState('');
+
+  useEffect(() => {
+    getSettings().then(setSettings);
+  }, []);
+
+  const handleSave = async (newSettings) => {
+    try {
+      setSettings(newSettings);
+      await saveSettings(newSettings);
+    } catch (e) {
+      console.error("Failed to save settings", e);
+      alert("Failed to save settings");
+    }
+  };
+
+  const addRelay = () => {
+    if (!newRelay) return;
+    if (settings.nostrRelays.includes(newRelay)) return;
+    handleSave({
+      ...settings,
+      nostrRelays: [...settings.nostrRelays, newRelay]
+    });
+    setNewRelay('');
+  };
+
+  const removeRelay = (relay) => {
+    handleSave({
+      ...settings,
+      nostrRelays: settings.nostrRelays.filter(r => r !== relay)
+    });
+  };
+
+  const updateTurnServer = (field, value) => {
+    handleSave({
+      ...settings,
+      turnServer: {
+        ...settings.turnServer,
+        [field]: value
+      }
+    });
+  };
+
+  if (!settings) return <div className="p-4 text-center">Loading settings...</div>;
+
+  return (
+    <div className="space-y-6">
+      {/* Nostr Relays */}
+      <div className="card bg-base-100 border border-base-200 shadow-sm">
+        <div className="card-body p-4 gap-4">
+          <div>
+            <div className="font-semibold">Nostr Relays</div>
+            <div className="text-sm text-base-content/60">Servers used for signaling calls.</div>
+          </div>
+
+          <div className="space-y-2">
+            {settings.nostrRelays.map(relay => (
+              <div key={relay} className="flex items-center justify-between p-2 bg-base-200/50 rounded-lg text-sm">
+                <span className="truncate flex-1 mr-2">{relay}</span>
+                <button 
+                  onClick={() => removeRelay(relay)}
+                  className="btn btn-ghost btn-xs text-error"
+                >
+                  <IoTrash />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <input 
+              type="text" 
+              placeholder="wss://relay.example.com" 
+              className="input input-bordered input-sm flex-1"
+              value={newRelay}
+              onChange={e => setNewRelay(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addRelay()}
+            />
+            <button className="btn btn-sm btn-primary" onClick={addRelay}>
+              <IoAdd />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* TURN Server */}
+      <div className="card bg-base-100 border border-base-200 shadow-sm">
+        <div className="card-body p-4 gap-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-semibold">TURN Server</div>
+              <div className="text-sm text-base-content/60">Required for some restricted networks.</div>
+            </div>
+            <input 
+              type="checkbox" 
+              className="toggle toggle-primary"
+              checked={settings.turnServer.enabled}
+              onChange={e => updateTurnServer('enabled', e.target.checked)}
+            />
+          </div>
+
+          {settings.turnServer.enabled && (
+            <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
+              <div className="form-control w-full">
+                <label className="label">
+                  <span className="label-text">TURN URL</span>
+                </label>
+                <input 
+                  type="text" 
+                  placeholder="turn:your-server.com:3478" 
+                  className="input input-bordered w-full"
+                  value={settings.turnServer.urls}
+                  onChange={e => updateTurnServer('urls', e.target.value)}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="form-control w-full">
+                  <label className="label">
+                    <span className="label-text">Username</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    className="input input-bordered w-full"
+                    value={settings.turnServer.username}
+                    onChange={e => updateTurnServer('username', e.target.value)}
+                  />
+                </div>
+                <div className="form-control w-full">
+                  <label className="label">
+                    <span className="label-text">Password</span>
+                  </label>
+                  <input 
+                    type="password" 
+                    className="input input-bordered w-full"
+                    value={settings.turnServer.credential}
+                    onChange={e => updateTurnServer('credential', e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

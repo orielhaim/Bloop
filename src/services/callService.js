@@ -1,5 +1,6 @@
 import { joinRoom } from 'trystero/mqtt';
 import { useCallStore } from '../store/callStore';
+import { getSettings } from './settings';
 
 let roomId = null;
 let room = null;
@@ -18,7 +19,22 @@ export async function startCallSession(callRoom, callPassword, onStatusChange, o
     leaveCallSession();
   }
 
+  const settings = await getSettings();
   const config = { appId: 'bloop-p2p-phone', password: callPassword };
+
+  if (settings.turnServer && settings.turnServer.enabled) {
+    config.rtcConfig = {
+      iceTransportPolicy: 'relay',
+      iceServers: [
+        {
+          urls: settings.turnServer.urls,
+          username: settings.turnServer.username,
+          credential: settings.turnServer.credential
+        }
+      ]
+    };
+  }
+
   room = joinRoom(config, callRoom);
 
   room.onPeerJoin(peerId => {

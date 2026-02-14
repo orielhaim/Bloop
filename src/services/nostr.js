@@ -3,12 +3,8 @@ import { useCallStore } from '../store/callStore';
 import { decryptFromSender, encryptEnvelope, encryptForRecipient } from './crypto';
 import { getKeys as fetchKeys } from './api';
 import { mine, verify } from './pow';
+import { getSettings } from './settings';
 
-const RELAYS = [
-  'wss://nos.lol',
-  'wss://nostr.mom',
-  'wss://relay.snort.social'
-];
 const pool = new SimplePool();
 
 let subscription = null;
@@ -25,11 +21,13 @@ function base64UrlToHex(str) {
 export async function initNostrService(myNumber, myKeys) {
 
   const myPubHex = base64UrlToHex(myKeys.encryption.public.x);
+  const settings = await getSettings();
+  const relays = settings.nostrRelays;
 
   useCallStore.getState().setRelayConnection(true);
 
   subscription = pool.subscribe(
-    RELAYS,
+    relays,
     {
       kinds: [29999],
       '#p': [myPubHex],
@@ -158,6 +156,7 @@ export async function sendCallSignal(targetNumber, targetKeys, myNumber, myKeys,
     content: JSON.stringify(message),
   }, sk);
 
-  await Promise.any(pool.publish(RELAYS, event));
+  const settings = await getSettings();
+  await Promise.any(pool.publish(settings.nostrRelays, event));
   console.log("Call signal published to Nostr", targetPubHex, targetNumber);
 }
