@@ -153,14 +153,14 @@ export default function CallHistory({ compact = false, onViewContact }) {
   const contentWidth = compact ? 'w-full' : 'w-full max-w-xl mx-auto';
 
   return (
-    <div className={`flex flex-col h-full w-full ${compact ? 'p-4' : 'px-6 py-8'} gap-6`}>
+    <div className={`flex flex-col h-full w-full ${compact ? 'p-4' : 'px-6 py-8'} gap-6 min-h-0`}>
       {!compact && (
-        <div className="text-center space-y-2">
+        <div className="text-center space-y-2 shrink-0">
           <h2 className="text-3xl font-semibold">Call History</h2>
           <p className="text-sm text-base-content/60">Track your recent calls and reconnect quickly.</p>
         </div>
       )}
-      <div className={`flex-1 overflow-y-auto ${contentWidth} pb-2`}>
+      <div className={`flex-1 overflow-y-auto min-h-0 ${contentWidth} ${compact ? 'pb-2' : 'pb-24'}`}>
         {history.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-base-content/60">
             <div className="text-xl font-semibold">No calls yet</div>

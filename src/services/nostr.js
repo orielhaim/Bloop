@@ -2,6 +2,7 @@ import { SimplePool, generateSecretKey, finalizeEvent } from 'nostr-tools';
 import { useCallStore } from '../store/callStore';
 import { decryptFromSender, encryptEnvelope, encryptForRecipient } from './crypto';
 import { getKeys as fetchKeys } from './api';
+import { mine, verify } from './pow';
 
 const RELAYS = [
   'wss://nos.lol',
@@ -57,7 +58,15 @@ export function cleanupNostrService() {
 }
 
 async function handleIncomingMessage(event, myKeys) {
-  const content = JSON.parse(event.content);
+  const message = JSON.parse(event.content);
+  const { encryptedData, nonce, difficulty } = message;
+  
+  if (!encryptedData || nonce === undefined || difficulty === undefined) return;
+
+  const isValid = await verify(encryptedData, nonce, difficulty);
+  if (!isValid) return;
+
+  const content = JSON.parse(encryptedData);
 
   if (!content.ciphertext || !content.nonce || !content.ephemeralPublicKey) return;
 
@@ -127,6 +136,16 @@ export async function sendCallSignal(targetNumber, targetKeys, myNumber, myKeys,
     outerPayload
   );
 
+  const envelopeString = JSON.stringify(envelope);
+  const difficulty = 10;
+  const nonce = await mine(envelopeString, difficulty);
+
+  const message = {
+    encryptedData: envelopeString,
+    nonce,
+    difficulty
+  };
+
   const targetPubHex = base64UrlToHex(targetKeys.encryptionKey.x);
 
   const sk = generateSecretKey();
@@ -136,7 +155,7 @@ export async function sendCallSignal(targetNumber, targetKeys, myNumber, myKeys,
     kind: 29999,
     created_at: Math.floor(Date.now() / 1000),
     tags: [['p', targetPubHex]],
-    content: JSON.stringify(envelope),
+    content: JSON.stringify(message),
   }, sk);
 
   await Promise.any(pool.publish(RELAYS, event));

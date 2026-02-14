@@ -144,14 +144,14 @@ export default function Contacts({ compact = false, focusNumber = null }) {
   }, []);
 
   return (
-    <div className={`flex flex-col h-full w-full ${compact ? 'p-4' : 'px-6 py-8'} gap-6`}>
+    <div className={`flex flex-col h-full w-full ${compact ? 'p-4' : 'px-6 py-8'} gap-6 min-h-0`}>
       {!compact && (
-        <div className="text-center space-y-2">
+        <div className="text-center space-y-2 shrink-0">
           <h2 className="text-3xl font-semibold">Contacts</h2>
           <p className="text-sm text-base-content/60">Keep your most important people one tap away.</p>
         </div>
       )}
-      <div className={`space-y-4 ${contentWidth}`}>
+      <div className={`flex-1 overflow-y-auto min-h-0 space-y-4 ${contentWidth} ${compact ? '' : 'pb-24'}`}>
         {selectedContact ? (
           <div className="space-y-5">
             <div className="flex items-center justify-between gap-3">

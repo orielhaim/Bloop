@@ -76,8 +76,8 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-base-100 flex flex-col">
-      <div className="hidden md:flex items-center justify-between px-6 py-4 border-b border-base-200 bg-base-200/60 backdrop-blur">
+    <div className="h-dvh bg-base-100 flex flex-col overflow-hidden relative">
+      <div className="hidden md:flex items-center justify-between px-6 py-4 border-b border-base-200 bg-base-200/60 backdrop-blur shrink-0">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-lg font-semibold">B</div>
           <div>
@@ -95,7 +95,7 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="md:hidden px-4 pt-4 flex items-center justify-between">
+      <div className="md:hidden px-4 pt-4 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-lg font-semibold">B</div>
           <div>
@@ -121,12 +121,12 @@ export default function Home() {
             number={number}
           />
         ) : (
-          <div className="h-full flex flex-col md:flex-row">
-            <div className={`flex-1 flex flex-col justify-center items-center p-4 ${activeTab !== 'dialer' ? 'hidden md:flex' : ''}`}>
+          <div className="h-full flex flex-col md:flex-row overflow-hidden">
+            <div className={`flex-1 flex flex-col justify-center items-center p-4 pb-24 md:p-4 overflow-y-auto ${activeTab !== 'dialer' ? 'hidden md:flex' : ''}`}>
               <Dialer />
             </div>
-            <div className="hidden md:flex md:w-[360px] lg:w-[420px] border-l border-base-200 bg-base-100 flex-col">
-              <div className="p-3 border-b border-base-200 flex items-center justify-between">
+            <div className="hidden md:flex md:w-[360px] lg:w-[420px] border-l border-base-200 bg-base-100 flex-col h-full overflow-hidden">
+              <div className="p-3 border-b border-base-200 flex items-center justify-between shrink-0">
                 <div className="text-sm font-semibold tracking-widest text-base-content/50 uppercase">
                   Activity
                 </div>
@@ -153,18 +153,18 @@ export default function Home() {
                 )}
               </div>
             </div>
-            <div className={`md:hidden flex-1 ${activeTab === 'history' ? 'flex' : 'hidden'}`}>
+            <div className={`md:hidden flex-1 overflow-hidden ${activeTab === 'history' ? 'flex' : 'hidden'}`}>
               <CallHistory onViewContact={handleViewContact} />
             </div>
-            <div className={`md:hidden flex-1 ${activeTab === 'contacts' ? 'flex' : 'hidden'}`}>
+            <div className={`md:hidden flex-1 overflow-hidden ${activeTab === 'contacts' ? 'flex' : 'hidden'}`}>
               <Contacts focusNumber={focusContactNumber} />
             </div>
           </div>
         )}
       </div>
 
-      <div className="md:hidden select-none">
-        <div className="mx-4 mb-4 rounded-3xl bg-base-100/95 backdrop-blur-xl border border-base-200/80 pb-safe shadow-[0_18px_40px_-18px_rgba(0,0,0,0.6)] relative z-20">
+      <div className="md:hidden absolute bottom-0 left-0 right-0 pointer-events-none z-50">
+        <div className="mx-4 mb-4 rounded-3xl bg-base-100/95 backdrop-blur-xl border border-base-200/80 pb-safe shadow-[0_18px_40px_-18px_rgba(0,0,0,0.6)] relative pointer-events-auto">
           <div className="grid grid-cols-3 items-center gap-2 p-2">
             <button 
               className={`group flex items-center justify-center gap-3 rounded-2xl p-2 transition-all ${activeTab === 'dialer' ? 'bg-primary text-primary-content shadow-[0_10px_18px_-12px_rgba(0,0,0,0.7)]' : 'bg-base-200/60 text-base-content/70 hover:bg-base-200 hover:text-base-content'}`}
