@@ -16,6 +16,37 @@ export const useCallStore = create(
     historyUpdatedAt: null,
     contactsUpdatedAt: null,
 
+    // Media State
+    localStream: null,
+    localVideoTrack: null,
+    remoteVideoStream: null,
+    isLocalVideoEnabled: false,
+    isRemoteVideoPresent: false,
+
+    setLocalStream: (stream) => set((state) => {
+      state.localStream = stream;
+    }),
+
+    enableLocalVideo: (track) => set((state) => {
+      state.localVideoTrack = track;
+      state.isLocalVideoEnabled = true;
+    }),
+
+    disableLocalVideo: () => set((state) => {
+      state.localVideoTrack = null;
+      state.isLocalVideoEnabled = false;
+    }),
+
+    setRemoteVideoStream: (stream) => set((state) => {
+      state.remoteVideoStream = stream;
+      state.isRemoteVideoPresent = true;
+    }),
+
+    clearRemoteVideoStream: () => set((state) => {
+      state.remoteVideoStream = null;
+      state.isRemoteVideoPresent = false;
+    }),
+
     setRelayConnection: (conn) => set((state) => {
       state.relayConnection = conn;
     }),
@@ -114,6 +145,11 @@ export const useCallStore = create(
         draft.callPassword = null;
         draft.callStartedAt = null;
         draft.callConnectedAt = null;
+        draft.localStream = null;
+        draft.localVideoTrack = null;
+        draft.remoteVideoStream = null;
+        draft.isLocalVideoEnabled = false;
+        draft.isRemoteVideoPresent = false;
       });
       leaveCallSession();
     },
@@ -159,6 +195,11 @@ export const useCallStore = create(
       state.callPassword = null;
       state.callStartedAt = null;
       state.callConnectedAt = null;
+      state.localStream = null;
+      state.localVideoTrack = null;
+      state.remoteVideoStream = null;
+      state.isLocalVideoEnabled = false;
+      state.isRemoteVideoPresent = false;
     })
   }))
 );
