@@ -79,7 +79,7 @@ export default function Home() {
     <div className="h-dvh bg-base-100 flex flex-col overflow-hidden relative">
       <div className="hidden md:flex items-center justify-between px-6 py-4 border-b border-base-200 bg-base-200/60 backdrop-blur shrink-0">
         <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-lg font-semibold">B</div>
+          <img src="./icon.png" alt="Bloop" className="h-9 w-9 rounded-2xl" loading="lazy" />
           <div>
             <div className="text-lg font-semibold">Bloop</div>
           </div>
@@ -97,7 +97,7 @@ export default function Home() {
 
       <div className="md:hidden px-4 pt-4 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-lg font-semibold">B</div>
+          <img src="./icon.png" alt="Bloop" className="h-9 w-9 rounded-2xl" loading="lazy" />
           <div>
             <div className="text-base font-semibold">Bloop</div>
           </div>

@@ -1,10 +1,11 @@
 # Bloop
+**A peer-to-peer encrypted phone system where nobody - not even the server - knows who's calling whom.**
 
-**A p2p encrypted phone system where nobody - not even the server - knows who's calling whom.**
+Ever wished you could make a phone call without some company sitting in the middle, logging everything, and selling your metadata to advertisers? Yeah, me too.
 
-Ever wished you could make a phone call without some company sitting in the middle, logging everything, and selling your metadata to advertisers? Yeah me too.
+Bloop is a proof-of-concept that reimagines how phone calls could work. You get a number. You make calls. The calls are direct, encrypted, and private. The server? It's basically a dumb phone book. It knows your number and your public key. That's it. It doesn't route your calls, it doesn't know who you're talking to, and it certainly doesn't know what you're saying.
 
-Bloop is a proof-of-concept that reimagines how phone calls could work. You get a phone number. You make calls. The calls are direct, encrypted, and private. The server? It's basically a dumb phone book. It knows your number and your public key. That's it. It doesn't route your calls, it doesn't know who you're talking to, and it certainly doesn't know what you're saying.
+No accounts. No passwords. No email verification. No "we value your privacy" banners that mean the exact opposite. Just cryptography doing what cryptography was always supposed to do.
 
 ---
 
