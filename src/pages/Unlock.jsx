@@ -28,7 +28,7 @@ export default function Unlock({ onUnlock }) {
         await verifyChallenge(challengeId, number, signature);
 
         if (onUnlock) onUnlock();
-        else navigate('/home');
+        else navigate('/');
 
       } catch (e) {
         console.error(e);

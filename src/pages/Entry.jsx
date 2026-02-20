@@ -47,7 +47,7 @@ export default function Entry() {
     try {
       await unlockVault();
       await performAuth();
-      navigate('/home');
+      navigate('/');
     } catch (e) {
       console.error("Silent unlock failed", e);
       setError("Silent unlock failed: " + e.message);
@@ -103,11 +103,11 @@ export default function Entry() {
   }
 
   if (vaultState === 'none') {
-    return <Setup onComplete={() => navigate('/home')} />;
+    return <Setup onComplete={() => navigate('/')} />;
   }
 
   if (vaultState === 'password') {
-    return <Unlock mode="password" onUnlock={() => navigate('/home')} />;
+    return <Unlock mode="password" onUnlock={() => navigate('/')} />;
   }
 
   return null;

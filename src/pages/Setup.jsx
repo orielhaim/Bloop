@@ -49,7 +49,7 @@ export default function Setup({ onComplete }) {
         await setupVault(number, mode, password, keys);
 
         if (onComplete) onComplete();
-        else navigate('/home');
+        else navigate('/');
         
       } catch (e) {
         console.error(e);
@@ -86,7 +86,7 @@ export default function Setup({ onComplete }) {
       try {
         await importVaultExport(importData, requiresPassword ? importPassword : null);
         if (onComplete) onComplete();
-        else navigate('/home');
+        else navigate('/');
       } catch (e) {
         console.error(e);
         setImportError(e.message || "Import failed");

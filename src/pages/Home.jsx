@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { getStoredNumber, getStoredKeys, getVaultMode } from '../services/crypto';
+import { getStoredNumber, getStoredKeys } from '../services/crypto';
 import { useNavigate } from 'react-router-dom';
-import { getKeys as fetchKeys } from '../services/api';
 import { useCallStore } from '../store/callStore';
 import { initNostrService, cleanupNostrService } from '../services/nostr';
 import { IoKeypad, IoSettingsSharp, IoTimeOutline, IoPeopleOutline } from "react-icons/io5";
@@ -9,16 +8,13 @@ import { IoKeypad, IoSettingsSharp, IoTimeOutline, IoPeopleOutline } from "react
 import Dialer from '../components/phone/Dialer';
 import IncomingCall from '../components/phone/IncomingCall';
 import InCall from '../components/phone/InCall';
-import Settings from '../components/phone/Settings';
 import CallHistory from './CallHistory';
 import Contacts from './Contacts';
 
 export default function Home() {
   const [number, setNumber] = useState('');
   const [myKeys, setMyKeys] = useState(null);
-  const [serverKeys, setServerKeys] = useState(null);
-  const [currentMode, setCurrentMode] = useState('');
-  const [activeTab, setActiveTab] = useState('dialer'); // 'dialer' | 'settings' | 'history' | 'contacts'
+  const [activeTab, setActiveTab] = useState('dialer'); // 'dialer' | 'history' | 'contacts'
   const [rightPanelTab, setRightPanelTab] = useState('history'); // 'history' | 'contacts'
   const [focusContactNumber, setFocusContactNumber] = useState(null);
   
@@ -29,21 +25,16 @@ export default function Home() {
     try {
       const num = await getStoredNumber();
       if (!num) {
-        navigate('/');
+        navigate('/entry');
         return;
       }
       setNumber(num);
       
       const keys = await getStoredKeys();
       setMyKeys(keys);
-      
-      const mode = await getVaultMode();
-      setCurrentMode(mode);
-
-      fetchKeys(num).then(setServerKeys).catch(console.error);
     } catch (e) {
       console.error(e);
-      navigate('/');
+      navigate('/entry');
     }
   };
 
@@ -87,10 +78,10 @@ export default function Home() {
         <div className="flex items-center gap-3">
           <span className="badge badge-outline font-mono">{number}</span>
           <button
-            className={`btn btn-sm ${activeTab === 'settings' ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setActiveTab(activeTab === 'settings' ? 'dialer' : 'settings')}
+            className="btn btn-sm btn-ghost"
+            onClick={() => navigate('/settings')}
           >
-            {activeTab === 'settings' ? 'Back' : 'Settings'}
+            Settings
           </button>
         </div>
       </div>
@@ -104,7 +95,7 @@ export default function Home() {
         </div>
         <div className="flex items-center gap-2">
           <span className="badge badge-outline font-mono text-xs">{number}</span>
-          <button className="btn btn-sm btn-ghost" onClick={() => setActiveTab('settings')}>
+          <button className="btn btn-sm btn-ghost" onClick={() => navigate('/settings')}>
             <IoSettingsSharp className="h-5 w-5" />
           </button>
         </div>
@@ -112,15 +103,6 @@ export default function Home() {
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-hidden relative bg-base-100">
-        {activeTab === 'settings' ? (
-          <Settings
-            currentMode={currentMode}
-            setCurrentMode={setCurrentMode}
-            myKeys={myKeys}
-            serverKeys={serverKeys}
-            number={number}
-          />
-        ) : (
           <div className="h-full flex flex-col md:flex-row overflow-hidden">
             <div className={`flex-1 flex flex-col justify-center items-center p-4 pb-24 md:p-4 overflow-y-auto ${activeTab !== 'dialer' ? 'hidden md:flex' : ''}`}>
               <Dialer />
@@ -160,7 +142,6 @@ export default function Home() {
               <Contacts focusNumber={focusContactNumber} />
             </div>
           </div>
-        )}
       </div>
 
       <div className="md:hidden absolute bottom-0 left-0 right-0 pointer-events-none z-50">

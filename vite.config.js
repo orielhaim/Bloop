@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { version } from './package.json'
 
 
 export default defineConfig({
@@ -12,6 +13,9 @@ export default defineConfig({
     }),
     tailwindcss()
   ],
+  define: {
+    'import.meta.env.PACKAGE_VERSION': JSON.stringify(version),
+  },
   server: {
     proxy: {
       '/api': {

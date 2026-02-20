@@ -3,7 +3,7 @@ import { isVaultUnlocked } from '../services/crypto';
 
 export default function ProtectedRoute({ children }) {
   if (!isVaultUnlocked()) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/entry" replace />;
   }
   return children;
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { switchVaultMode, clearVault, createVaultExport } from '../../services/crypto';
-import { cleanupNostrService } from '../../services/nostr';
+import { switchVaultMode, clearVault, createVaultExport, getStoredNumber, getVaultMode } from '../services/crypto';
+import { cleanupNostrService } from '../services/nostr';
 import { useNavigate } from 'react-router-dom';
 import { 
   IoChevronBack, 
@@ -16,11 +16,23 @@ import {
   IoAdd,
   IoTrash
 } from 'react-icons/io5';
-import { getSettings, saveSettings } from '../../services/settings';
+import { getSettings, saveSettings } from '../services/settings';
 
-export default function Settings({ currentMode, setCurrentMode, myKeys, number }) {
+export default function Settings() {
   const [view, setView] = useState('main'); // main, display, security, keys
+  const [number, setNumber] = useState('');
+  const [currentMode, setCurrentMode] = useState('');
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const loadData = async () => {
+      const num = await getStoredNumber();
+      setNumber(num);
+      const mode = await getVaultMode();
+      setCurrentMode(mode);
+    };
+    loadData();
+  }, []);
   
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
@@ -31,13 +43,24 @@ export default function Settings({ currentMode, setCurrentMode, myKeys, number }
     if (window.confirm("Are you sure you want to logout? This will clear your vault from this device.")) {
       await clearVault();
       cleanupNostrService();
-      navigate('/');
+      navigate('/entry');
     }
   };
 
   if (view === 'main') {
     return (
       <div className="flex flex-col h-full bg-base-100 animate-in fade-in slide-in-from-right-4 duration-200">
+        <div className="flex items-center gap-2 p-4 border-b border-base-200 bg-base-100 sticky top-0 z-10">
+          <button 
+            className="btn btn-ghost btn-sm -ml-2"
+            onClick={() => navigate('/')}
+          >
+            <IoChevronBack className="h-5 w-5" />
+            Home
+          </button>
+          <h2 className="text-lg font-semibold">Settings</h2>
+        </div>
+
         <div className="p-6 bg-base-200/50 flex flex-col items-center justify-center gap-2 border-b border-base-200">
           <div className="h-20 w-20 rounded-full bg-primary text-primary-content flex items-center justify-center text-3xl font-bold shadow-lg">
             B
@@ -52,87 +75,89 @@ export default function Settings({ currentMode, setCurrentMode, myKeys, number }
           <div className="text-xs text-base-content/50">Tap number to copy</div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          <div className="bg-base-100 rounded-2xl border border-base-200 shadow-sm overflow-hidden">
-            <button 
-              className="w-full flex items-center justify-between p-4 hover:bg-base-200/50 transition-colors border-b border-base-200 last:border-0"
-              onClick={() => setView('display')}
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
-                  <IoColorPaletteOutline className="h-5 w-5" />
+        <div className="flex-1 overflow-y-auto p-4">
+          <div className="w-full max-w-xl mx-auto space-y-4">
+            <div className="bg-base-100 rounded-2xl border border-base-200 shadow-sm overflow-hidden">
+              <button 
+                className="w-full flex items-center justify-between p-4 hover:bg-base-200/50 transition-colors border-b border-base-200 last:border-0"
+                onClick={() => setView('display')}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
+                    <IoColorPaletteOutline className="h-5 w-5" />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-medium">Display</div>
+                    <div className="text-xs text-base-content/60">Theme, colors</div>
+                  </div>
                 </div>
-                <div className="text-left">
-                  <div className="font-medium">Display</div>
-                  <div className="text-xs text-base-content/60">Theme, colors</div>
-                </div>
-              </div>
-              <IoChevronForward className="text-base-content/30" />
-            </button>
+                <IoChevronForward className="text-base-content/30" />
+              </button>
 
-            <button 
-              className="w-full flex items-center justify-between p-4 hover:bg-base-200/50 transition-colors border-b border-base-200 last:border-0"
-              onClick={() => setView('communication')}
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400">
-                  <IoGlobeOutline className="h-5 w-5" />
+              <button 
+                className="w-full flex items-center justify-between p-4 hover:bg-base-200/50 transition-colors border-b border-base-200 last:border-0"
+                onClick={() => setView('communication')}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400">
+                    <IoGlobeOutline className="h-5 w-5" />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-medium">Communication</div>
+                    <div className="text-xs text-base-content/60">Nostr, TURN servers</div>
+                  </div>
                 </div>
-                <div className="text-left">
-                  <div className="font-medium">Communication</div>
-                  <div className="text-xs text-base-content/60">Nostr, TURN servers</div>
-                </div>
-              </div>
-              <IoChevronForward className="text-base-content/30" />
-            </button>
+                <IoChevronForward className="text-base-content/30" />
+              </button>
 
-            <button 
-              className="w-full flex items-center justify-between p-4 hover:bg-base-200/50 transition-colors border-b border-base-200 last:border-0"
-              onClick={() => setView('security')}
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400">
-                  <IoShieldCheckmarkOutline className="h-5 w-5" />
+              <button 
+                className="w-full flex items-center justify-between p-4 hover:bg-base-200/50 transition-colors border-b border-base-200 last:border-0"
+                onClick={() => setView('security')}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400">
+                    <IoShieldCheckmarkOutline className="h-5 w-5" />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-medium">Security</div>
+                    <div className="text-xs text-base-content/60">Vault mode, password</div>
+                  </div>
                 </div>
-                <div className="text-left">
-                  <div className="font-medium">Security</div>
-                  <div className="text-xs text-base-content/60">Vault mode, password</div>
-                </div>
-              </div>
-              <IoChevronForward className="text-base-content/30" />
-            </button>
+                <IoChevronForward className="text-base-content/30" />
+              </button>
 
-            <button 
-              className="w-full flex items-center justify-between p-4 hover:bg-base-200/50 transition-colors"
-              onClick={() => setView('keys')}
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400">
-                  <IoKeyOutline className="h-5 w-5" />
+              <button 
+                className="w-full flex items-center justify-between p-4 hover:bg-base-200/50 transition-colors"
+                onClick={() => setView('keys')}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400">
+                    <IoKeyOutline className="h-5 w-5" />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-medium">Key Management</div>
+                    <div className="text-xs text-base-content/60">View, export keys</div>
+                  </div>
                 </div>
-                <div className="text-left">
-                  <div className="font-medium">Key Management</div>
-                  <div className="text-xs text-base-content/60">View, export keys</div>
-                </div>
-              </div>
-              <IoChevronForward className="text-base-content/30" />
-            </button>
-          </div>
+                <IoChevronForward className="text-base-content/30" />
+              </button>
+            </div>
 
-          <div className="bg-base-100 rounded-2xl border border-base-200 shadow-sm overflow-hidden">
-            <button 
-              className="w-full flex items-center gap-3 p-4 hover:bg-error/10 transition-colors text-error"
-              onClick={handleLogout}
-            >
-              <div className="p-2 rounded-lg bg-error/10">
-                <IoLogOutOutline className="h-5 w-5" />
-              </div>
-              <span className="font-medium">Logout / Reset</span>
-            </button>
-          </div>
-          
-          <div className="text-center text-xs text-base-content/30 py-4">
-            Bloop v0.1.0
+            <div className="bg-base-100 rounded-2xl border border-base-200 shadow-sm overflow-hidden">
+              <button 
+                className="w-full flex items-center gap-3 p-4 hover:bg-error/10 transition-colors text-error"
+                onClick={handleLogout}
+              >
+                <div className="p-2 rounded-lg bg-error/10">
+                  <IoLogOutOutline className="h-5 w-5" />
+                </div>
+                <span className="font-medium">Logout / Reset</span>
+              </button>
+            </div>
+            
+            <div className="text-center text-xs text-base-content/30 py-4">
+              Bloop v{import.meta.env.PACKAGE_VERSION}
+            </div>
           </div>
         </div>
       </div>
@@ -155,7 +180,7 @@ export default function Settings({ currentMode, setCurrentMode, myKeys, number }
       <div className="flex-1 overflow-y-auto p-4">
         {view === 'display' && <DisplaySettings />}
         {view === 'security' && <SecuritySettings currentMode={currentMode} setCurrentMode={setCurrentMode} />}
-        {view === 'keys' && <KeySettings myKeys={myKeys} number={number} currentMode={currentMode} />}
+        {view === 'keys' && <KeySettings number={number} currentMode={currentMode} />}
         {view === 'communication' && <CommunicationSettings />}
       </div>
     </div>
@@ -210,7 +235,7 @@ function CommunicationSettings() {
   if (!settings) return <div className="p-4 text-center">Loading settings...</div>;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-xl mx-auto">
       {/* Nostr Relays */}
       <div className="card bg-base-100 border border-base-200 shadow-sm">
         <div className="card-body p-4 gap-4">
@@ -326,7 +351,7 @@ function DisplaySettings() {
   }, [theme]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-xl mx-auto">
       <div className="card bg-base-100 border border-base-200 shadow-sm">
         <div className="card-body p-4">
           <h3 className="font-medium mb-3">App Theme</h3>
@@ -395,7 +420,7 @@ function SecuritySettings({ currentMode, setCurrentMode }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-xl mx-auto">
       <div className="card bg-base-100 border border-base-200 shadow-sm">
         <div className="card-body p-4 gap-4">
           <div className="flex items-center justify-between">
@@ -512,7 +537,7 @@ function KeySettings({ number, currentMode }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-xl mx-auto">
       <div className="card bg-base-100 border border-base-200 shadow-sm">
         <div className="card-body p-4 gap-4">
           <div>
