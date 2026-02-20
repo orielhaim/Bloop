@@ -48,6 +48,15 @@ async function derivePasswordKEK(password, salt) {
   );
 }
 
+function toBase64(value) {
+  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+  return btoa(String.fromCharCode(...bytes));
+}
+
+function fromBase64(base64) {
+  return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+}
+
 async function wrapDEK(dek, kek) {
   const iv = window.crypto.getRandomValues(new Uint8Array(12));
   const wrapped = await window.crypto.subtle.wrapKey(
@@ -83,6 +92,71 @@ async function unwrapDEK(wrappedDekBuffer, kek) {
     true,
     ["encrypt", "decrypt", "wrapKey", "unwrapKey"]
   );
+}
+
+async function deriveFileKey(password, salt) {
+  const enc = new TextEncoder();
+  const keyMaterial = await window.crypto.subtle.importKey(
+    "raw",
+    enc.encode(password),
+    { name: "PBKDF2" },
+    false,
+    ["deriveKey"]
+  );
+
+  return window.crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: salt,
+      iterations: 600000,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function encryptPayloadWithPassword(password, payload) {
+  const salt = window.crypto.getRandomValues(new Uint8Array(32));
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveFileKey(password, salt);
+  const encoded = new TextEncoder().encode(JSON.stringify(payload));
+
+  const ciphertext = await window.crypto.subtle.encrypt(
+    {
+      name: "AES-GCM",
+      iv: iv
+    },
+    key,
+    encoded
+  );
+
+  return {
+    salt: toBase64(salt),
+    iv: toBase64(iv),
+    ciphertext: toBase64(new Uint8Array(ciphertext))
+  };
+}
+
+async function decryptPayloadWithPassword(password, payload) {
+  const salt = fromBase64(payload?.salt || "");
+  const iv = fromBase64(payload?.iv || "");
+  const ciphertext = fromBase64(payload?.ciphertext || "");
+  const key = await deriveFileKey(password, salt);
+
+  const decrypted = await window.crypto.subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv: iv
+    },
+    key,
+    ciphertext
+  );
+
+  const decoded = new TextDecoder().decode(decrypted);
+  return JSON.parse(decoded);
 }
 
 export async function encryptData(data) {
@@ -311,6 +385,166 @@ export async function clearVault() {
   lockVault();
   await db.clear();
   localStorage.removeItem('encrypted_user_keys');
+}
+
+export async function createVaultExport(options = {}) {
+  const { oneTimePassword, includeContacts, includeHistory } = options;
+  const mode = await getVaultMode();
+  const number = await getStoredNumber();
+  if (!mode || !number) throw new Error("Vault missing");
+
+  const filename = `${number}.bloop`;
+  const payload = {};
+
+  if (mode === 'password') {
+    if (!memoryDEK) throw new Error("Vault must be unlocked to export data");
+
+    const encryptedUserKeys = localStorage.getItem('encrypted_user_keys');
+    const wrappedDek = await db.keys.get('password-wrapped-dek');
+    const salt = await db.meta.get('password-salt');
+    if (!encryptedUserKeys || !wrappedDek || !salt) {
+      throw new Error("Password vault data missing");
+    }
+
+    payload.encryptedUserKeys = encryptedUserKeys;
+    payload.passwordWrappedDek = toBase64(wrappedDek);
+    payload.passwordSalt = toBase64(salt);
+
+    if (includeContacts) {
+      const encryptedContacts = await db.contacts.get('contacts');
+      if (encryptedContacts) {
+        payload.encryptedContacts = toBase64(new Uint8Array(encryptedContacts));
+      }
+    }
+
+    if (includeHistory) {
+      const encryptedHistory = await db.history.get('call_history');
+      if (encryptedHistory) {
+        payload.encryptedHistory = toBase64(new Uint8Array(encryptedHistory));
+      }
+    }
+
+    return {
+      filename,
+      data: {
+        version: 2,
+        number,
+        mode,
+        encrypted: false,
+        payload
+      }
+    };
+  }
+
+  const keys = await getStoredKeys();
+  if (!keys) throw new Error("Keys unavailable");
+  payload.keys = keys;
+
+  if (includeContacts) {
+    const encryptedContacts = await db.contacts.get('contacts');
+    if (encryptedContacts) {
+      try {
+        payload.contacts = await decryptData(encryptedContacts);
+      } catch (e) {
+        console.warn("Failed to decrypt contacts for export", e);
+      }
+    }
+  }
+  if (includeHistory) {
+    const encryptedHistory = await db.history.get('call_history');
+    if (encryptedHistory) {
+      try {
+        payload.history = await decryptData(encryptedHistory);
+      } catch (e) {
+        console.warn("Failed to decrypt history for export", e);
+      }
+    }
+  }
+
+  if (oneTimePassword) {
+    const encryptedPayload = await encryptPayloadWithPassword(oneTimePassword, payload);
+    return {
+      filename,
+      data: {
+        version: 2,
+        number,
+        mode: 'silent',
+        encrypted: true,
+        payload: encryptedPayload
+      }
+    };
+  }
+
+  return {
+    filename,
+    data: {
+      version: 2,
+      number,
+      mode: 'silent',
+      encrypted: false,
+      payload
+    }
+  };
+}
+
+export async function importVaultExport(exportData, password) {
+  if (!exportData || typeof exportData !== 'object') throw new Error("Invalid file");
+  const { number, mode, encrypted, payload } = exportData;
+  if (!number || !mode || !payload) throw new Error("Invalid file");
+
+  // Handle encrypted payload (Silent mode with one-time password)
+  let resolvedPayload = payload;
+  if (encrypted) {
+    if (!password) throw new Error("Password required");
+    resolvedPayload = await decryptPayloadWithPassword(password, payload);
+  }
+
+  if (mode === 'password') {
+    const { encryptedUserKeys, passwordWrappedDek, passwordSalt, encryptedContacts, encryptedHistory } = resolvedPayload;
+    if (!encryptedUserKeys || !passwordWrappedDek || !passwordSalt) {
+      throw new Error("Password data missing");
+    }
+
+    // Restore vault
+    await db.meta.put('mode', 'password');
+    await db.meta.put('phone_number', number);
+    await db.meta.put('password-salt', fromBase64(passwordSalt));
+    await db.keys.put('password-wrapped-dek', fromBase64(passwordWrappedDek));
+    await db.keys.remove('silent-kek');
+    await db.keys.remove('silent-wrapped-dek');
+    localStorage.setItem('encrypted_user_keys', encryptedUserKeys);
+    
+    // Unlock to restore additional data
+    await unlockVault(password);
+
+    if (encryptedContacts) {
+      const buffer = fromBase64(encryptedContacts).buffer;
+      await db.contacts.put('contacts', buffer);
+    }
+
+    if (encryptedHistory) {
+      const buffer = fromBase64(encryptedHistory).buffer;
+      await db.history.put('call_history', buffer);
+    }
+
+    return { mode: 'password', number };
+  }
+
+  // Silent mode (restoring from plain or decrypted payload)
+  if (!resolvedPayload?.keys) throw new Error("Keys missing");
+  await setupVault(number, 'silent', '', resolvedPayload.keys);
+
+  if (resolvedPayload.contacts) {
+    const encrypted = await encryptData(resolvedPayload.contacts);
+    await db.contacts.put('contacts', encrypted);
+  }
+
+  if (resolvedPayload.history) {
+    const encrypted = await encryptData(resolvedPayload.history);
+    await db.history.put('call_history', encrypted);
+  }
+
+  return { mode: 'silent', number };
 }
 
 async function importX25519PublicKey(jwk) {

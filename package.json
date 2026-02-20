@@ -20,10 +20,10 @@
     "@hono/zod-validator": "^0.7.6",
     "@ionic/react": "^8.7.17",
     "@ionic/react-router": "^8.7.17",
-    "@tailwindcss/vite": "^4.1.18",
+    "@tailwindcss/vite": "^4.2.0",
     "@types/react-router": "^5.1.20",
     "@types/react-router-dom": "^5.3.3",
-    "hono": "^4.11.9",
+    "hono": "^4.12.0",
     "immer": "^11.1.4",
     "ionicons": "^8.0.13",
     "nostr-tools": "^2.23.1",
@@ -32,7 +32,7 @@
     "react-icons": "^5.5.0",
     "react-router": "7.13.0",
     "react-router-dom": "7.13.0",
-    "tailwindcss": "^4.1.18",
+    "tailwindcss": "^4.2.0",
     "trystero": "^0.22.0",
     "zod": "^4.3.6",
     "zustand": "^5.0.11"
@@ -48,7 +48,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.0",
     "globals": "^17.3.0",
-    "vite": "^8.0.0-beta.14"
+    "vite": "^8.0.0-beta.15"
   },
   "overrides": {
     "vite": "^8.0.0-beta.13"

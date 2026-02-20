@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { switchVaultMode, clearVault } from '../../services/crypto';
+import { switchVaultMode, clearVault, createVaultExport } from '../../services/crypto';
 import { cleanupNostrService } from '../../services/nostr';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -155,7 +155,7 @@ export default function Settings({ currentMode, setCurrentMode, myKeys, number }
       <div className="flex-1 overflow-y-auto p-4">
         {view === 'display' && <DisplaySettings />}
         {view === 'security' && <SecuritySettings currentMode={currentMode} setCurrentMode={setCurrentMode} />}
-        {view === 'keys' && <KeySettings myKeys={myKeys} />}
+        {view === 'keys' && <KeySettings myKeys={myKeys} number={number} currentMode={currentMode} />}
         {view === 'communication' && <CommunicationSettings />}
       </div>
     </div>
@@ -458,14 +458,57 @@ function SecuritySettings({ currentMode, setCurrentMode }) {
   );
 }
 
-function KeySettings({ myKeys }) {
-  const [showKeys, setShowKeys] = useState(false);
+function KeySettings({ myKeys, number, currentMode }) {
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportPasswordEnabled, setExportPasswordEnabled] = useState(false);
+  const [exportPassword, setExportPassword] = useState('');
+  const [confirmExportPassword, setConfirmExportPassword] = useState('');
+  const [exportContacts, setExportContacts] = useState(false);
+  const [exportHistory, setExportHistory] = useState(false);
+  const [processing, setProcessing] = useState(false);
+  const [exportError, setExportError] = useState('');
 
-  const handleExport = () => {
-    if (!myKeys) return;
-    const exportData = JSON.stringify(myKeys, null, 2);
-    navigator.clipboard.writeText(exportData);
-    alert("Keys copied to clipboard!");
+  const handleExportFile = async () => {
+    setExportError('');
+    if (currentMode === 'silent' && exportPasswordEnabled) {
+      if (!exportPassword) {
+        setExportError("Password is required");
+        return;
+      }
+      if (exportPassword !== confirmExportPassword) {
+        setExportError("Passwords do not match");
+        return;
+      }
+    }
+
+    setProcessing(true);
+    try {
+      const options = {
+        oneTimePassword: exportPasswordEnabled ? exportPassword : null,
+        includeContacts: exportContacts,
+        includeHistory: exportHistory
+      };
+
+      const { filename, data } = await createVaultExport(options);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename || `${number || 'bloop'}.bloop`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      
+      setExportPassword('');
+      setConfirmExportPassword('');
+      setExportPasswordEnabled(false);
+      setIsExporting(false);
+    } catch (e) {
+      setExportError(e.message || "Export failed");
+    } finally {
+      setProcessing(false);
+    }
   };
 
   return (
@@ -473,29 +516,82 @@ function KeySettings({ myKeys }) {
       <div className="card bg-base-100 border border-base-200 shadow-sm">
         <div className="card-body p-4 gap-4">
           <div>
-            <div className="font-semibold">Your Keys</div>
-            <div className="text-sm text-base-content/60">These are your identity. Never share your private keys.</div>
+            <div className="font-semibold">Your Identity</div>
+            <div className="text-sm text-base-content/60">Manage your secure identity and backups.</div>
           </div>
 
           <div className="flex gap-2">
-             <button 
-              className="btn btn-sm flex-1"
-              onClick={() => setShowKeys(!showKeys)}
-            >
-              {showKeys ? 'Hide Keys' : 'Show Keys'}
-            </button>
             <button 
-              className="btn btn-sm btn-outline flex-1"
-              onClick={handleExport}
+              className="btn btn-sm btn-primary flex-1"
+              onClick={() => setIsExporting(true)}
             >
-              Export (Copy)
+              Export Backup
             </button>
           </div>
 
-          {showKeys && (
-            <div className="mockup-code bg-neutral text-neutral-content text-xs">
-              <pre className="p-4"><code>{myKeys ? JSON.stringify(myKeys, null, 2) : 'Loading...'}</code></pre>
-            </div>
+          {isExporting && (
+             <div className="modal modal-open">
+               <div className="modal-box">
+                 <h3 className="font-bold text-lg">Export Backup</h3>
+                 <div className="py-4 space-y-4">
+                    <div className="form-control">
+                      <label className="label cursor-pointer justify-start gap-4">
+                        <input type="checkbox" className="checkbox" checked={exportContacts} onChange={e => setExportContacts(e.target.checked)} />
+                        <span className="label-text">Include Contacts</span> 
+                      </label>
+                    </div>
+                    <div className="form-control">
+                      <label className="label cursor-pointer justify-start gap-4">
+                        <input type="checkbox" className="checkbox" checked={exportHistory} onChange={e => setExportHistory(e.target.checked)} />
+                        <span className="label-text">Include Call History</span> 
+                      </label>
+                    </div>
+
+                    {currentMode === 'silent' && (
+                        <div className="border-t border-base-200 pt-4 mt-4">
+                            <div className="form-control">
+                                <label className="label cursor-pointer justify-start gap-4">
+                                    <input type="checkbox" className="checkbox checkbox-sm" checked={exportPasswordEnabled} onChange={e => setExportPasswordEnabled(e.target.checked)} />
+                                    <span className="label-text font-medium">Encrypt with one-time password</span>
+                                </label>
+                            </div>
+                            {exportPasswordEnabled && (
+                                <div className="space-y-2 mt-2 pl-8">
+                                    <input 
+                                        type="password" 
+                                        placeholder="Password" 
+                                        className="input input-bordered w-full input-sm" 
+                                        value={exportPassword}
+                                        onChange={e => setExportPassword(e.target.value)}
+                                    />
+                                    <input 
+                                        type="password" 
+                                        placeholder="Confirm Password" 
+                                        className="input input-bordered w-full input-sm" 
+                                        value={confirmExportPassword}
+                                        onChange={e => setConfirmExportPassword(e.target.value)}
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {currentMode === 'password' && (
+                        <div className="alert alert-info text-xs">
+                            Your export will be encrypted with your current vault password.
+                        </div>
+                    )}
+                 </div>
+                 
+                 {exportError && <div className="alert alert-error text-sm mt-2">{exportError}</div>}
+
+                 <div className="modal-action">
+                    <button className="btn" onClick={() => setIsExporting(false)} disabled={processing}>Cancel</button>
+                    <button className="btn btn-primary" onClick={handleExportFile} disabled={processing}>
+                        {processing ? <span className="loading loading-spinner loading-xs"></span> : 'Export'}
+                    </button>
+                 </div>
+               </div>
+             </div>
           )}
         </div>
       </div>
