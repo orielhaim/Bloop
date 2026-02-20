@@ -68,7 +68,7 @@ export default function Setup({ onComplete }) {
       setImportError(null);
       setImportFileName(file.name);
       setStep('import');
-    } catch (e) {
+    } catch {
       setError("Invalid connection file");
     }
   };

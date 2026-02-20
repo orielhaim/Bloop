@@ -1,39 +1,53 @@
-self.onmessage = async (e) => {
-  const { data, difficulty } = e.data;
+const BATCH_SIZE = 2048;
+const encoder    = new TextEncoder();
+
+function checkLeadingZeroBits(hash, difficulty) {
+  const fullBytes  = difficulty >>> 3;
+  const remainBits = difficulty & 7;
+
+  for (let i = 0; i < fullBytes; i++) {
+    if (hash[i] !== 0) return false;
+  }
+
+  if (remainBits > 0 && (hash[fullBytes] & (0xFF << (8 - remainBits))) !== 0) {
+    return false;
+  }
+
+  return true;
+}
+
+async function mine(data, difficulty) {
+  const prefix = encoder.encode(data);
+  let base = 0;
+
+  while (true) {
+    const pending = new Array(BATCH_SIZE);
+
+    for (let i = 0; i < BATCH_SIZE; i++) {
+      const suffix = encoder.encode(String(base + i));
+      const buf    = new Uint8Array(prefix.length + suffix.length);
+      buf.set(prefix);
+      buf.set(suffix, prefix.length);
+      pending[i] = crypto.subtle.digest('SHA-256', buf);
+    }
+
+    const hashes = await Promise.all(pending);
+
+    for (let i = 0; i < BATCH_SIZE; i++) {
+      if (checkLeadingZeroBits(new Uint8Array(hashes[i]), difficulty)) {
+        return base + i;
+      }
+    }
+
+    base += BATCH_SIZE;
+  }
+}
+
+self.onmessage = async ({ data: msg }) => {
   try {
-    const nonce = await mine(data, difficulty);
+    const nonce = await mine(msg.data, msg.difficulty);
     self.postMessage({ nonce });
   } catch (err) {
     self.postMessage({ error: err.message });
   }
 };
-
-async function mine(data, difficulty) {
-  let nonce = 0;
-  while (true) {
-    const isValid = await checkHash(data, nonce, difficulty);
-    if (isValid) return nonce;
-    nonce++;
-  }
-}
-
-async function checkHash(data, nonce, difficulty) {
-  const enc = new TextEncoder();
-  const msgBuffer = enc.encode(data + nonce.toString());
-  const hashBuffer = await self.crypto.subtle.digest('SHA-256', msgBuffer);
-  const hashArray = new Uint8Array(hashBuffer);
-
-  const fullBytes = Math.floor(difficulty / 8);
-  const remainingBits = difficulty % 8;
-
-  for (let i = 0; i < fullBytes; i++) {
-    if (hashArray[i] !== 0) return false;
-  }
-
-  if (remainingBits > 0) {
-    const mask = 0xFF << (8 - remainingBits);
-    if ((hashArray[fullBytes] & mask) !== 0) return false;
-  }
-
-  return true;
-}

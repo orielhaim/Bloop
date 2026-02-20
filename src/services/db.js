@@ -1,110 +1,135 @@
 const DB_NAME = 'VaultDB';
 const DB_VERSION = 3;
-const STORE_KEYS = 'keys';
-const STORE_META = 'meta';
-const STORE_HISTORY = 'history';
-const STORE_CONTACTS = 'contacts';
 
-function openDB() {
-  return new Promise((resolve, reject) => {
+const STORES = Object.freeze({
+  keys: 'keys',
+  meta: 'meta',
+  history: 'history',
+  contacts: 'contacts',
+});
+
+const ALL_STORES = Object.freeze(Object.values(STORES));
+
+let dbInstance = null;
+let dbOpenPromise = null;
+
+function getDB() {
+  if (dbInstance) return Promise.resolve(dbInstance);
+  if (dbOpenPromise) return dbOpenPromise;
+
+  dbOpenPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      if (!db.objectStoreNames.contains(STORE_KEYS)) {
-        db.createObjectStore(STORE_KEYS);
-      }
-      if (!db.objectStoreNames.contains(STORE_META)) {
-        db.createObjectStore(STORE_META);
-      }
-      if (!db.objectStoreNames.contains(STORE_HISTORY)) {
-        db.createObjectStore(STORE_HISTORY);
-      }
-      if (!db.objectStoreNames.contains(STORE_CONTACTS)) {
-        db.createObjectStore(STORE_CONTACTS);
+    request.onupgradeneeded = ({ target }) => {
+      const database = target.result;
+      for (const name of ALL_STORES) {
+        if (!database.objectStoreNames.contains(name)) {
+          database.createObjectStore(name);
+        }
       }
     };
+
+    request.onsuccess = () => {
+      dbInstance = request.result;
+
+      dbInstance.onclose = () => {
+        dbInstance = null;
+        dbOpenPromise = null;
+      };
+
+      dbInstance.onversionchange = () => {
+        dbInstance.close();
+        dbInstance = null;
+        dbOpenPromise = null;
+      };
+
+      resolve(dbInstance);
+    };
+
+    request.onerror = () => {
+      dbOpenPromise = null;
+      reject(request.error);
+    };
+  });
+
+  return dbOpenPromise;
+}
+
+function exec(storeName, mode, operation) {
+  return getDB().then(
+    (database) =>
+      new Promise((resolve, reject) => {
+        const tx = database.transaction(storeName, mode);
+        const store = tx.objectStore(storeName);
+        const request = operation(store);
+
+        if (request instanceof IDBRequest) {
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        } else {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        }
+      }),
+  );
+}
+
+const get    = (store, key)        => exec(store, 'readonly',  (s) => s.get(key));
+const getAll = (store)             => exec(store, 'readonly',  (s) => s.getAll());
+const put    = (store, key, value) => exec(store, 'readwrite', (s) => s.put(value, key));
+const remove = (store, key)        => exec(store, 'readwrite', (s) => s.delete(key));
+
+function clear() {
+  return getDB().then(
+    (database) =>
+      new Promise((resolve, reject) => {
+        const tx = database.transaction(ALL_STORES, 'readwrite');
+        for (const name of ALL_STORES) tx.objectStore(name).clear();
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      }),
+  );
+}
+
+function batch(storeName, operations) {
+  return getDB().then(
+    (database) =>
+      new Promise((resolve, reject) => {
+        const tx = database.transaction(storeName, 'readwrite');
+        for (const { type, key, value } of operations) {
+          const store = tx.objectStore(storeName);
+          if (type === 'put') store.put(value, key);
+          else if (type === 'delete') store.delete(key);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      }),
+  );
+}
+
+function createStoreAccessor(storeName) {
+  return Object.freeze({
+    get:    (key)        => get(storeName, key),
+    getAll: ()           => getAll(storeName),
+    put:    (key, value) => put(storeName, key, value),
+    remove: (key)        => remove(storeName, key),
+    batch:  (ops)        => batch(storeName, ops),
   });
 }
 
-async function get(storeName, key) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeName, 'readonly');
-    const store = transaction.objectStore(storeName);
-    const request = store.get(key);
-    
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-  });
-}
-
-async function put(storeName, key, value) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeName, 'readwrite');
-    const store = transaction.objectStore(storeName);
-    const request = store.put(value, key);
-    
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-  });
-}
-
-async function remove(storeName, key) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeName, 'readwrite');
-    const store = transaction.objectStore(storeName);
-    const request = store.delete(key);
-    
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-  });
-}
-
-async function clear() {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_KEYS, STORE_META, STORE_HISTORY, STORE_CONTACTS], 'readwrite');
-    const keysStore = transaction.objectStore(STORE_KEYS);
-    const metaStore = transaction.objectStore(STORE_META);
-    const historyStore = transaction.objectStore(STORE_HISTORY);
-    const contactsStore = transaction.objectStore(STORE_CONTACTS);
-    
-    keysStore.clear();
-    metaStore.clear();
-    historyStore.clear();
-    contactsStore.clear();
-    
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-  });
-}
-
-export const db = {
-  keys: {
-    get: (key) => get(STORE_KEYS, key),
-    put: (key, value) => put(STORE_KEYS, key, value),
-    remove: (key) => remove(STORE_KEYS, key),
-  },
-  meta: {
-    get: (key) => get(STORE_META, key),
-    put: (key, value) => put(STORE_META, key, value),
-    remove: (key) => remove(STORE_META, key),
-  },
-  history: {
-    get: (key) => get(STORE_HISTORY, key),
-    put: (key, value) => put(STORE_HISTORY, key, value),
-    remove: (key) => remove(STORE_HISTORY, key),
-  },
-  contacts: {
-    get: (key) => get(STORE_CONTACTS, key),
-    put: (key, value) => put(STORE_CONTACTS, key, value),
-    remove: (key) => remove(STORE_CONTACTS, key),
-  },
+export const db = Object.freeze({
+  ...Object.fromEntries(ALL_STORES.map((name) => [name, createStoreAccessor(name)])),
   clear,
-};
+  destroy() {
+    if (dbInstance) {
+      dbInstance.close();
+      dbInstance = null;
+      dbOpenPromise = null;
+    }
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(DB_NAME);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  },
+});

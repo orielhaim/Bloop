@@ -46,8 +46,11 @@ export default function InCall() {
 
     const handleRemoteStream = (stream) => {
       if (remoteAudioRef.current) {
+        if (remoteAudioRef.current.srcObject === stream) return;
         remoteAudioRef.current.srcObject = stream;
-        remoteAudioRef.current.play().catch(e => console.error("Auto-play failed", e));
+        remoteAudioRef.current.play().catch(e => {
+          if (e.name !== 'AbortError') console.error("Auto-play failed", e);
+        });
       }
     };
 
@@ -55,6 +58,7 @@ export default function InCall() {
       .then(localStream => {
         localStreamRef.current = localStream;
         if (localAudioRef.current) {
+          if (localAudioRef.current.srcObject === localStream) return;
           localAudioRef.current.srcObject = localStream;
         }
       })
@@ -84,16 +88,24 @@ export default function InCall() {
 
   useEffect(() => {
     if (remoteVideoRef.current && remoteVideoStream) {
+      if (remoteVideoRef.current.srcObject === remoteVideoStream) return;
       remoteVideoRef.current.srcObject = remoteVideoStream;
-      remoteVideoRef.current.play().catch(e => console.error("Remote video play failed", e));
+      remoteVideoRef.current.play().catch(e => {
+        if (e.name !== 'AbortError') console.error("Remote video play failed", e);
+      });
     }
   }, [remoteVideoStream, isRemoteVideoPresent]);
 
   useEffect(() => {
     if (localVideoRef.current && localVideoTrack) {
+      const currentStream = localVideoRef.current.srcObject;
+      if (currentStream && currentStream.getVideoTracks()[0] === localVideoTrack) return;
+
       const stream = new MediaStream([localVideoTrack]);
       localVideoRef.current.srcObject = stream;
-      localVideoRef.current.play().catch(e => console.error("Local video play failed", e));
+      localVideoRef.current.play().catch(e => {
+        if (e.name !== 'AbortError') console.error("Local video play failed", e);
+      });
     }
   }, [localVideoTrack, isLocalVideoEnabled]);
 

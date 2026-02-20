@@ -458,7 +458,7 @@ function SecuritySettings({ currentMode, setCurrentMode }) {
   );
 }
 
-function KeySettings({ myKeys, number, currentMode }) {
+function KeySettings({ number, currentMode }) {
   const [isExporting, setIsExporting] = useState(false);
   const [exportPasswordEnabled, setExportPasswordEnabled] = useState(false);
   const [exportPassword, setExportPassword] = useState('');
