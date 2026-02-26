@@ -1,5 +1,8 @@
 import { Database } from 'bun:sqlite';
-import { join } from 'node:path';
+import { mkdirSync } from "fs";
+import { join } from "path";
+
+mkdirSync(join(__dirname, "data"), { recursive: true });
 
 const db = new Database(join(__dirname, 'data', 'database.sqlite'));
 
