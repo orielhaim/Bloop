@@ -1,7 +1,7 @@
-import { Database } from "bun:sqlite";
-import { join } from "node:path";
+import { Database } from 'bun:sqlite';
+import { join } from 'node:path';
 
-const db = new Database(join(__dirname, "data", "database.sqlite"));
+const db = new Database(join(__dirname, 'data', 'database.sqlite'));
 
 // Initialize tables
 db.run(`
@@ -33,9 +33,11 @@ db.run(`
 
 // Helper to get last number
 export function getNextNumber() {
-  const result = db.query("SELECT MAX(CAST(number AS INTEGER)) as max_num FROM numbers").get();
+  const result = db
+    .query('SELECT MAX(CAST(number AS INTEGER)) as max_num FROM numbers')
+    .get();
   const lastNum = result?.max_num || 1000;
-  
+
   return (lastNum + 1).toString();
 }
 

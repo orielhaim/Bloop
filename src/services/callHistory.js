@@ -1,5 +1,5 @@
+import { decryptData, encryptData } from './crypto';
 import { db } from './db';
-import { encryptData, decryptData } from './crypto';
 
 const HISTORY_KEY = 'call_history';
 const HISTORY_LIMIT = 200;
@@ -11,7 +11,7 @@ async function loadHistory() {
     const history = await decryptData(encrypted);
     return Array.isArray(history) ? history : [];
   } catch (e) {
-    console.error("Failed to decrypt call history", e);
+    console.error('Failed to decrypt call history', e);
     return [];
   }
 }

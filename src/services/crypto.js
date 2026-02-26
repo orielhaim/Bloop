@@ -1,15 +1,15 @@
 import { db } from './db.js';
 
-const ALGO_AES  = 'AES-GCM';
-const ALGO_KDF  = 'PBKDF2';
+const ALGO_AES = 'AES-GCM';
+const ALGO_KDF = 'PBKDF2';
 const ALGO_SIGN = 'Ed25519';
-const ALGO_DH   = 'X25519';
+const ALGO_DH = 'X25519';
 
-const AES_KEY_BITS   = 256;
-const IV_BYTES       = 12;
-const SALT_BYTES     = 32;
+const AES_KEY_BITS = 256;
+const IV_BYTES = 12;
+const SALT_BYTES = 32;
 const KDF_ITERATIONS = 600_000;
-const KDF_HASH       = 'SHA-256';
+const KDF_HASH = 'SHA-256';
 
 const LOCAL_KEY_SLOT = 'encrypted_user_keys';
 
@@ -31,7 +31,9 @@ function fromBase64(b64) {
 }
 
 function toHex(buffer) {
-  return Array.from(toBytes(buffer), (b) => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(toBytes(buffer), (b) =>
+    b.toString(16).padStart(2, '0'),
+  ).join('');
 }
 
 function fromHex(hex) {
@@ -52,7 +54,11 @@ function freshSalt() {
 
 async function aesEncrypt(key, plainBytes) {
   const iv = freshIV();
-  const ct = await crypto.subtle.encrypt({ name: ALGO_AES, iv }, key, plainBytes);
+  const ct = await crypto.subtle.encrypt(
+    { name: ALGO_AES, iv },
+    key,
+    plainBytes,
+  );
   const out = new Uint8Array(IV_BYTES + ct.byteLength);
   out.set(iv);
   out.set(new Uint8Array(ct), IV_BYTES);
@@ -61,7 +67,7 @@ async function aesEncrypt(key, plainBytes) {
 
 async function aesDecrypt(key, combined) {
   const buf = toBytes(combined);
-  const iv   = buf.subarray(0, IV_BYTES);
+  const iv = buf.subarray(0, IV_BYTES);
   const data = buf.subarray(IV_BYTES);
   return crypto.subtle.decrypt({ name: ALGO_AES, iv }, key, data);
 }
@@ -92,7 +98,13 @@ function generateSilentKEK() {
 // ── PBKDF2 key derivation ───────────────────────────────────────
 
 async function importKeyMaterial(password) {
-  return crypto.subtle.importKey('raw', encoder.encode(password), ALGO_KDF, false, ['deriveKey']);
+  return crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    ALGO_KDF,
+    false,
+    ['deriveKey'],
+  );
 }
 
 function pbkdf2Params(salt) {
@@ -101,7 +113,13 @@ function pbkdf2Params(salt) {
 
 async function deriveAESKey(password, salt, extractable, usages) {
   const material = await importKeyMaterial(password);
-  return crypto.subtle.deriveKey(pbkdf2Params(salt), material, AES_GCM_PARAMS, extractable, usages);
+  return crypto.subtle.deriveKey(
+    pbkdf2Params(salt),
+    material,
+    AES_GCM_PARAMS,
+    extractable,
+    usages,
+  );
 }
 
 function derivePasswordKEK(password, salt) {
@@ -116,7 +134,10 @@ function deriveFileKey(password, salt) {
 
 async function wrapDEK(dek, kek) {
   const iv = freshIV();
-  const wrapped = await crypto.subtle.wrapKey('raw', dek, kek, { name: ALGO_AES, iv });
+  const wrapped = await crypto.subtle.wrapKey('raw', dek, kek, {
+    name: ALGO_AES,
+    iv,
+  });
   const out = new Uint8Array(IV_BYTES + wrapped.byteLength);
   out.set(iv);
   out.set(new Uint8Array(wrapped), IV_BYTES);
@@ -125,11 +146,13 @@ async function wrapDEK(dek, kek) {
 
 async function unwrapDEK(wrappedBuffer, kek) {
   const buf = toBytes(wrappedBuffer);
-  const iv   = buf.subarray(0, IV_BYTES);
+  const iv = buf.subarray(0, IV_BYTES);
   const data = buf.subarray(IV_BYTES);
 
   return crypto.subtle.unwrapKey(
-    'raw', data, kek,
+    'raw',
+    data,
+    kek,
     { name: ALGO_AES, iv },
     AES_GCM_PARAMS,
     true,
@@ -141,20 +164,24 @@ async function unwrapDEK(wrappedBuffer, kek) {
 
 async function encryptPayloadWithPassword(password, payload) {
   const salt = freshSalt();
-  const iv   = freshIV();
-  const key  = await deriveFileKey(password, salt);
-  const ct   = await crypto.subtle.encrypt({ name: ALGO_AES, iv }, key, encoder.encode(JSON.stringify(payload)));
+  const iv = freshIV();
+  const key = await deriveFileKey(password, salt);
+  const ct = await crypto.subtle.encrypt(
+    { name: ALGO_AES, iv },
+    key,
+    encoder.encode(JSON.stringify(payload)),
+  );
 
   return {
-    salt:       toBase64(salt),
-    iv:        toBase64(iv),
+    salt: toBase64(salt),
+    iv: toBase64(iv),
     ciphertext: toBase64(ct),
   };
 }
 
 async function decryptPayloadWithPassword(password, { salt, iv, ciphertext }) {
-  const key = await deriveFileKey(password, fromBase64(salt), );
-  const pt  = await crypto.subtle.decrypt(
+  const key = await deriveFileKey(password, fromBase64(salt));
+  const pt = await crypto.subtle.decrypt(
     { name: ALGO_AES, iv: fromBase64(iv) },
     key,
     fromBase64(ciphertext),
@@ -166,7 +193,10 @@ async function decryptPayloadWithPassword(password, { salt, iv, ciphertext }) {
 
 function importX25519Key(jwk, isPrivate) {
   return crypto.subtle.importKey(
-    'jwk', jwk, { name: ALGO_DH }, true,
+    'jwk',
+    jwk,
+    { name: ALGO_DH },
+    true,
     isPrivate ? ['deriveKey', 'deriveBits'] : [],
   );
 }
@@ -184,7 +214,11 @@ async function deriveSharedKey(privateKey, publicKey) {
 async function dhEncrypt(privateKey, publicKey, plaintext) {
   const shared = await deriveSharedKey(privateKey, publicKey);
   const iv = freshIV();
-  const ct = await crypto.subtle.encrypt({ name: ALGO_AES, iv }, shared, encoder.encode(plaintext));
+  const ct = await crypto.subtle.encrypt(
+    { name: ALGO_AES, iv },
+    shared,
+    encoder.encode(plaintext),
+  );
   return { ciphertext: toHex(ct), nonce: toHex(iv) };
 }
 
@@ -296,7 +330,10 @@ export async function getStoredKeys() {
 export async function generateKeys() {
   const [signing, encryption] = await Promise.all([
     crypto.subtle.generateKey({ name: ALGO_SIGN }, true, ['sign', 'verify']),
-    crypto.subtle.generateKey({ name: ALGO_DH }, true, ['deriveKey', 'deriveBits']),
+    crypto.subtle.generateKey({ name: ALGO_DH }, true, [
+      'deriveKey',
+      'deriveBits',
+    ]),
   ]);
 
   const [sigPub, sigPriv, encPub, encPriv] = await Promise.all([
@@ -307,14 +344,24 @@ export async function generateKeys() {
   ]);
 
   return {
-    signing:    { public: sigPub,  private: sigPriv  },
-    encryption: { public: encPub,  private: encPriv  },
+    signing: { public: sigPub, private: sigPriv },
+    encryption: { public: encPub, private: encPriv },
   };
 }
 
 export async function signChallenge(privateKeyJwk, challengeHex) {
-  const key = await crypto.subtle.importKey('jwk', privateKeyJwk, { name: ALGO_SIGN }, true, ['sign']);
-  const sig = await crypto.subtle.sign(ALGO_SIGN, key, encoder.encode(challengeHex));
+  const key = await crypto.subtle.importKey(
+    'jwk',
+    privateKeyJwk,
+    { name: ALGO_SIGN },
+    true,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign(
+    ALGO_SIGN,
+    key,
+    encoder.encode(challengeHex),
+  );
   return toHex(sig);
 }
 
@@ -362,7 +409,10 @@ export async function createVaultExport(options = {}) {
   await attachOptionalData(payload, includeContacts, includeHistory, true);
 
   if (oneTimePassword) {
-    const encrypted = await encryptPayloadWithPassword(oneTimePassword, payload);
+    const encrypted = await encryptPayloadWithPassword(
+      oneTimePassword,
+      payload,
+    );
     return exportEnvelope(filename, number, 'silent', true, encrypted);
   }
 
@@ -370,7 +420,8 @@ export async function createVaultExport(options = {}) {
 }
 
 export async function importVaultExport(exportData, password) {
-  if (!exportData || typeof exportData !== 'object') throw new Error('Invalid file');
+  if (!exportData || typeof exportData !== 'object')
+    throw new Error('Invalid file');
   const { number, mode, encrypted, payload } = exportData;
   if (!number || !mode || !payload) throw new Error('Invalid file');
 
@@ -387,7 +438,11 @@ export async function importVaultExport(exportData, password) {
 
 //  Public API — end-to-end encrypted messaging
 
-export async function encryptForRecipient(senderPrivateJwk, recipientPublicJwk, plaintext) {
+export async function encryptForRecipient(
+  senderPrivateJwk,
+  recipientPublicJwk,
+  plaintext,
+) {
   const [priv, pub] = await Promise.all([
     importX25519Key(senderPrivateJwk, true),
     importX25519Key(recipientPublicJwk, false),
@@ -395,7 +450,12 @@ export async function encryptForRecipient(senderPrivateJwk, recipientPublicJwk, 
   return dhEncrypt(priv, pub, plaintext);
 }
 
-export async function decryptFromSender(recipientPrivateJwk, senderPublicJwk, ciphertextHex, nonceHex) {
+export async function decryptFromSender(
+  recipientPrivateJwk,
+  senderPublicJwk,
+  ciphertextHex,
+  nonceHex,
+) {
   const [priv, pub] = await Promise.all([
     importX25519Key(recipientPrivateJwk, true),
     importX25519Key(senderPublicJwk, false),
@@ -404,11 +464,21 @@ export async function decryptFromSender(recipientPrivateJwk, senderPublicJwk, ci
 }
 
 export async function encryptEnvelope(recipientPublicJwk, plaintext) {
-  const ephemeral = await crypto.subtle.generateKey({ name: ALGO_DH }, true, ['deriveKey', 'deriveBits']);
+  const ephemeral = await crypto.subtle.generateKey({ name: ALGO_DH }, true, [
+    'deriveKey',
+    'deriveBits',
+  ]);
   const recipientPublic = await importX25519Key(recipientPublicJwk, false);
 
-  const { ciphertext, nonce } = await dhEncrypt(ephemeral.privateKey, recipientPublic, plaintext);
-  const ephemeralPublicKey = await crypto.subtle.exportKey('jwk', ephemeral.publicKey);
+  const { ciphertext, nonce } = await dhEncrypt(
+    ephemeral.privateKey,
+    recipientPublic,
+    plaintext,
+  );
+  const ephemeralPublicKey = await crypto.subtle.exportKey(
+    'jwk',
+    ephemeral.publicKey,
+  );
 
   return { ciphertext, nonce, ephemeralPublicKey };
 }
@@ -458,7 +528,11 @@ function exportEnvelope(filename, number, mode, encrypted, payload) {
   return { filename, data: { version: 2, number, mode, encrypted, payload } };
 }
 
-async function buildPasswordExportPayload(payload, includeContacts, includeHistory) {
+async function buildPasswordExportPayload(
+  payload,
+  includeContacts,
+  includeHistory,
+) {
   const encryptedUserKeys = localStorage.getItem(LOCAL_KEY_SLOT);
   const [wrappedDek, salt] = await Promise.all([
     db.keys.get('password-wrapped-dek'),
@@ -469,14 +543,19 @@ async function buildPasswordExportPayload(payload, includeContacts, includeHisto
     throw new Error('Password vault data missing');
   }
 
-  payload.encryptedUserKeys  = encryptedUserKeys;
+  payload.encryptedUserKeys = encryptedUserKeys;
   payload.passwordWrappedDek = toBase64(wrappedDek);
-  payload.passwordSalt       = toBase64(salt);
+  payload.passwordSalt = toBase64(salt);
 
   await attachOptionalData(payload, includeContacts, includeHistory, false);
 }
 
-async function attachOptionalData(payload, includeContacts, includeHistory, decrypt) {
+async function attachOptionalData(
+  payload,
+  includeContacts,
+  includeHistory,
+  decrypt,
+) {
   const tasks = [];
 
   if (includeContacts) {
@@ -484,8 +563,11 @@ async function attachOptionalData(payload, includeContacts, includeHistory, decr
       db.contacts.get('contacts').then(async (raw) => {
         if (!raw) return;
         if (decrypt) {
-          try { payload.contacts = await decryptData(raw); }
-          catch (e) { console.warn('Failed to decrypt contacts for export', e); }
+          try {
+            payload.contacts = await decryptData(raw);
+          } catch (e) {
+            console.warn('Failed to decrypt contacts for export', e);
+          }
         } else {
           payload.encryptedContacts = toBase64(raw);
         }
@@ -498,8 +580,11 @@ async function attachOptionalData(payload, includeContacts, includeHistory, decr
       db.history.get('call_history').then(async (raw) => {
         if (!raw) return;
         if (decrypt) {
-          try { payload.history = await decryptData(raw); }
-          catch (e) { console.warn('Failed to decrypt history for export', e); }
+          try {
+            payload.history = await decryptData(raw);
+          } catch (e) {
+            console.warn('Failed to decrypt history for export', e);
+          }
         } else {
           payload.encryptedHistory = toBase64(raw);
         }
@@ -511,7 +596,13 @@ async function attachOptionalData(payload, includeContacts, includeHistory, decr
 }
 
 async function importPasswordVault(resolved, number, password) {
-  const { encryptedUserKeys, passwordWrappedDek, passwordSalt, encryptedContacts, encryptedHistory } = resolved;
+  const {
+    encryptedUserKeys,
+    passwordWrappedDek,
+    passwordSalt,
+    encryptedContacts,
+    encryptedHistory,
+  } = resolved;
   if (!encryptedUserKeys || !passwordWrappedDek || !passwordSalt) {
     throw new Error('Password data missing');
   }
@@ -528,10 +619,14 @@ async function importPasswordVault(resolved, number, password) {
   localStorage.setItem(LOCAL_KEY_SLOT, encryptedUserKeys);
   await unlockVault(password);
 
-  await Promise.all([
-    encryptedContacts && db.contacts.put('contacts', fromBase64(encryptedContacts).buffer),
-    encryptedHistory  && db.history.put('call_history', fromBase64(encryptedHistory).buffer),
-  ].filter(Boolean));
+  await Promise.all(
+    [
+      encryptedContacts &&
+        db.contacts.put('contacts', fromBase64(encryptedContacts).buffer),
+      encryptedHistory &&
+        db.history.put('call_history', fromBase64(encryptedHistory).buffer),
+    ].filter(Boolean),
+  );
 
   return { mode: 'password', number };
 }
@@ -540,10 +635,18 @@ async function importSilentVault(resolved, number) {
   if (!resolved?.keys) throw new Error('Keys missing');
   await setupVault(number, 'silent', '', resolved.keys);
 
-  await Promise.all([
-    resolved.contacts && encryptData(resolved.contacts).then((enc) => db.contacts.put('contacts', enc)),
-    resolved.history  && encryptData(resolved.history).then((enc) => db.history.put('call_history', enc)),
-  ].filter(Boolean));
+  await Promise.all(
+    [
+      resolved.contacts &&
+        encryptData(resolved.contacts).then((enc) =>
+          db.contacts.put('contacts', enc),
+        ),
+      resolved.history &&
+        encryptData(resolved.history).then((enc) =>
+          db.history.put('call_history', enc),
+        ),
+    ].filter(Boolean),
+  );
 
   return { mode: 'silent', number };
 }

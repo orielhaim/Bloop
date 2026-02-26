@@ -1,15 +1,15 @@
 const BATCH_SIZE = 2048;
-const encoder    = new TextEncoder();
+const encoder = new TextEncoder();
 
 function checkLeadingZeroBits(hash, difficulty) {
-  const fullBytes  = difficulty >>> 3;
+  const fullBytes = difficulty >>> 3;
   const remainBits = difficulty & 7;
 
   for (let i = 0; i < fullBytes; i++) {
     if (hash[i] !== 0) return false;
   }
 
-  if (remainBits > 0 && (hash[fullBytes] & (0xFF << (8 - remainBits))) !== 0) {
+  if (remainBits > 0 && (hash[fullBytes] & (0xff << (8 - remainBits))) !== 0) {
     return false;
   }
 
@@ -25,7 +25,7 @@ async function mine(data, difficulty) {
 
     for (let i = 0; i < BATCH_SIZE; i++) {
       const suffix = encoder.encode(String(base + i));
-      const buf    = new Uint8Array(prefix.length + suffix.length);
+      const buf = new Uint8Array(prefix.length + suffix.length);
       buf.set(prefix);
       buf.set(suffix, prefix.length);
       pending[i] = crypto.subtle.digest('SHA-256', buf);

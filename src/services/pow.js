@@ -1,14 +1,14 @@
 const encoder = new TextEncoder();
 
 function checkLeadingZeroBits(hash, difficulty) {
-  const fullBytes    = difficulty >>> 3;
-  const remainBits   = difficulty & 7;
+  const fullBytes = difficulty >>> 3;
+  const remainBits = difficulty & 7;
 
   for (let i = 0; i < fullBytes; i++) {
     if (hash[i] !== 0) return false;
   }
 
-  if (remainBits > 0 && (hash[fullBytes] & (0xFF << (8 - remainBits))) !== 0) {
+  if (remainBits > 0 && (hash[fullBytes] & (0xff << (8 - remainBits))) !== 0) {
     return false;
   }
 
@@ -17,7 +17,7 @@ function checkLeadingZeroBits(hash, difficulty) {
 
 export async function verify(data, nonce, difficulty) {
   const buffer = encoder.encode(data + nonce);
-  const hash   = new Uint8Array(await crypto.subtle.digest('SHA-256', buffer));
+  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', buffer));
   return checkLeadingZeroBits(hash, difficulty);
 }
 
@@ -28,10 +28,9 @@ export function mine(data, difficulty = 10, { signal } = {}) {
       return;
     }
 
-    const worker = new Worker(
-      new URL('./pow.worker.js', import.meta.url),
-      { type: 'module' },
-    );
+    const worker = new Worker(new URL('./pow.worker.js', import.meta.url), {
+      type: 'module',
+    });
 
     const cleanup = () => {
       worker.terminate();

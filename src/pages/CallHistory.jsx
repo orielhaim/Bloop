@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { IoCallOutline, IoPersonAddOutline } from 'react-icons/io5';
-import { getCallHistory } from '../services/callHistory';
-import { useCallStore } from '../store/callStore';
-import { getStoredKeys, getStoredNumber } from '../services/crypto';
 import { getKeys as fetchKeys } from '../services/api';
+import { getCallHistory } from '../services/callHistory';
+import {
+  getContactDisplayName,
+  getContacts,
+  upsertContact,
+} from '../services/contactsManager';
+import { getStoredKeys, getStoredNumber } from '../services/crypto';
 import { sendCallSignal } from '../services/nostr';
-import { getContactDisplayName, getContacts, upsertContact } from '../services/contactsManager';
+import { useCallStore } from '../store/callStore';
 
 export default function CallHistory({ compact = false, onViewContact }) {
   const [history, setHistory] = useState([]);
@@ -15,10 +19,12 @@ export default function CallHistory({ compact = false, onViewContact }) {
   const [savingId, setSavingId] = useState(null);
   const [modalItem, setModalItem] = useState(null);
   const [modalDraft, setModalDraft] = useState({ name: '', number: '' });
-  const historyUpdatedAt = useCallStore(state => state.historyUpdatedAt);
-  const contactsUpdatedAt = useCallStore(state => state.contactsUpdatedAt);
-  const setContactsUpdatedAt = useCallStore(state => state.setContactsUpdatedAt);
-  const startCalling = useCallStore(state => state.startCalling);
+  const historyUpdatedAt = useCallStore((state) => state.historyUpdatedAt);
+  const contactsUpdatedAt = useCallStore((state) => state.contactsUpdatedAt);
+  const setContactsUpdatedAt = useCallStore(
+    (state) => state.setContactsUpdatedAt,
+  );
+  const startCalling = useCallStore((state) => state.startCalling);
 
   useEffect(() => {
     let active = true;
@@ -52,14 +58,14 @@ export default function CallHistory({ compact = false, onViewContact }) {
     return new Intl.DateTimeFormat('en-US', {
       month: 'short',
       day: 'numeric',
-      year: 'numeric'
+      year: 'numeric',
     });
   }, []);
 
   const timeFormatter = useMemo(() => {
     return new Intl.DateTimeFormat('en-US', {
       hour: 'numeric',
-      minute: '2-digit'
+      minute: '2-digit',
     });
   }, []);
 
@@ -108,7 +114,7 @@ export default function CallHistory({ compact = false, onViewContact }) {
     setLoadingId(item.id);
     try {
       const targetKeys = await fetchKeys(item.number);
-      if (!targetKeys) throw new Error("Number not found");
+      if (!targetKeys) throw new Error('Number not found');
 
       const callRoom = crypto.randomUUID();
       const callPassword = crypto.randomUUID();
@@ -116,12 +122,19 @@ export default function CallHistory({ compact = false, onViewContact }) {
       const myNumber = await getStoredNumber();
       const myKeys = await getStoredKeys();
 
-      await sendCallSignal(item.number, targetKeys, myNumber, myKeys, callRoom, callPassword);
+      await sendCallSignal(
+        item.number,
+        targetKeys,
+        myNumber,
+        myKeys,
+        callRoom,
+        callPassword,
+      );
 
       startCalling(item.number, callRoom, callPassword);
     } catch (e) {
       console.error(e);
-      alert(e.message || "Call failed");
+      alert(e.message || 'Call failed');
     } finally {
       setLoadingId(null);
     }
@@ -136,7 +149,7 @@ export default function CallHistory({ compact = false, onViewContact }) {
         id: crypto.randomUUID(),
         name: modalDraft.name.trim(),
         number: modalDraft.number.trim(),
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
       };
       const next = await upsertContact(contact);
       setContacts(next);
@@ -153,18 +166,26 @@ export default function CallHistory({ compact = false, onViewContact }) {
   const contentWidth = compact ? 'w-full' : 'w-full max-w-xl mx-auto';
 
   return (
-    <div className={`flex flex-col h-full w-full ${compact ? 'p-4' : 'px-6 py-8'} gap-6 min-h-0`}>
+    <div
+      className={`flex flex-col h-full w-full ${compact ? 'p-4' : 'px-6 py-8'} gap-6 min-h-0`}
+    >
       {!compact && (
         <div className="text-center space-y-2 shrink-0">
           <h2 className="text-3xl font-semibold">Call History</h2>
-          <p className="text-sm text-base-content/60">Track your recent calls and reconnect quickly.</p>
+          <p className="text-sm text-base-content/60">
+            Track your recent calls and reconnect quickly.
+          </p>
         </div>
       )}
-      <div className={`flex-1 overflow-y-auto min-h-0 ${contentWidth} ${compact ? 'pb-2' : 'pb-24'}`}>
+      <div
+        className={`flex-1 overflow-y-auto min-h-0 ${contentWidth} ${compact ? 'pb-2' : 'pb-24'}`}
+      >
         {history.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-base-content/60">
             <div className="text-xl font-semibold">No calls yet</div>
-            <div className="text-sm mt-2">Your call activity will appear here.</div>
+            <div className="text-sm mt-2">
+              Your call activity will appear here.
+            </div>
           </div>
         ) : (
           <div className="space-y-6">
@@ -176,32 +197,55 @@ export default function CallHistory({ compact = false, onViewContact }) {
                 <div className="space-y-2">
                   {group.items.map((item) => {
                     const isExpanded = expandedId === item.id;
-                    const timeLabel = item.endedAt ? timeFormatter.format(new Date(item.endedAt)) : '';
+                    const timeLabel = item.endedAt
+                      ? timeFormatter.format(new Date(item.endedAt))
+                      : '';
                     const detailLine = `${item.direction === 'incoming' ? 'Incoming' : 'Outgoing'} • ${item.status.charAt(0).toUpperCase()}${item.status.slice(1)}`;
-                    const duration = item.status === 'answered' ? ` • ${formatDuration(item.durationSec || 0)}` : '';
+                    const duration =
+                      item.status === 'answered'
+                        ? ` • ${formatDuration(item.durationSec || 0)}`
+                        : '';
                     const contact = contactsByNumber[item.number];
-                    const displayName = contact ? getContactDisplayName(contact) : item.number;
+                    const displayName = contact
+                      ? getContactDisplayName(contact)
+                      : item.number;
                     return (
-                      <div key={item.id} className="card bg-base-100 border border-base-200 shadow-sm">
+                      <div
+                        key={item.id}
+                        className="card bg-base-100 border border-base-200 shadow-sm"
+                      >
                         <button
                           type="button"
                           className="card-body p-4 flex-row items-center justify-between"
-                          onClick={() => setExpandedId(isExpanded ? null : item.id)}
+                          onClick={() =>
+                            setExpandedId(isExpanded ? null : item.id)
+                          }
                         >
                           <div className="flex items-center gap-3">
                             <div className="h-12 w-12 rounded-full bg-base-200 flex items-center justify-center text-base-content/70">
                               <IoCallOutline className="h-5 w-5" />
                             </div>
                             <div className="text-left">
-                              <div className="text-base font-semibold">{displayName}</div>
-                              {contact && <div className="text-xs text-base-content/50 font-mono">{item.number}</div>}
+                              <div className="text-base font-semibold">
+                                {displayName}
+                              </div>
+                              {contact && (
+                                <div className="text-xs text-base-content/50 font-mono">
+                                  {item.number}
+                                </div>
+                              )}
                             </div>
                           </div>
-                          <div className="text-xs text-base-content/60">{timeLabel}</div>
+                          <div className="text-xs text-base-content/60">
+                            {timeLabel}
+                          </div>
                         </button>
                         {isExpanded && (
                           <div className="px-4 pb-4 pt-2 border-t border-base-200">
-                            <div className="text-xs text-base-content/60">{detailLine}{duration}</div>
+                            <div className="text-xs text-base-content/60">
+                              {detailLine}
+                              {duration}
+                            </div>
                             <div className="mt-3 grid grid-cols-2 gap-2">
                               <button
                                 type="button"
@@ -209,7 +253,11 @@ export default function CallHistory({ compact = false, onViewContact }) {
                                 onClick={() => handleCallBack(item)}
                                 disabled={loadingId === item.id}
                               >
-                                {loadingId === item.id ? <span className="loading loading-spinner loading-sm"></span> : 'Call'}
+                                {loadingId === item.id ? (
+                                  <span className="loading loading-spinner loading-sm"></span>
+                                ) : (
+                                  'Call'
+                                )}
                               </button>
                               {!contact ? (
                                 <button
@@ -219,7 +267,7 @@ export default function CallHistory({ compact = false, onViewContact }) {
                                     setModalItem(item);
                                     setModalDraft({
                                       name: '',
-                                      number: item.number
+                                      number: item.number,
                                     });
                                   }}
                                 >
@@ -232,7 +280,9 @@ export default function CallHistory({ compact = false, onViewContact }) {
                                 <button
                                   type="button"
                                   className="btn btn-sm btn-outline w-full"
-                                  onClick={() => onViewContact && onViewContact(item.number)}
+                                  onClick={() =>
+                                    onViewContact && onViewContact(item.number)
+                                  }
                                 >
                                   View
                                 </button>
@@ -255,14 +305,18 @@ export default function CallHistory({ compact = false, onViewContact }) {
             <div className="p-6 space-y-4">
               <div>
                 <div className="text-lg font-semibold">Save Contact</div>
-                <div className="text-xs text-base-content/60">Add a name for {modalItem.number}</div>
+                <div className="text-xs text-base-content/60">
+                  Add a name for {modalItem.number}
+                </div>
               </div>
               <div className="space-y-3">
                 <input
                   type="text"
                   className="input input-bordered w-full"
                   value={modalDraft.name}
-                  onChange={(e) => setModalDraft((prev) => ({ ...prev, name: e.target.value }))}
+                  onChange={(e) =>
+                    setModalDraft((prev) => ({ ...prev, name: e.target.value }))
+                  }
                   placeholder="Name"
                 />
                 <input
@@ -273,7 +327,10 @@ export default function CallHistory({ compact = false, onViewContact }) {
                 />
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <button className="btn btn-ghost w-full" onClick={() => setModalItem(null)}>
+                <button
+                  className="btn btn-ghost w-full"
+                  onClick={() => setModalItem(null)}
+                >
                   Cancel
                 </button>
                 <button
@@ -281,7 +338,11 @@ export default function CallHistory({ compact = false, onViewContact }) {
                   onClick={() => handleSaveContact(modalItem)}
                   disabled={savingId === modalItem.id}
                 >
-                  {savingId === modalItem.id ? <span className="loading loading-spinner loading-sm"></span> : 'Save'}
+                  {savingId === modalItem.id ? (
+                    <span className="loading loading-spinner loading-sm"></span>
+                  ) : (
+                    'Save'
+                  )}
                 </button>
               </div>
             </div>

@@ -74,10 +74,11 @@ function exec(storeName, mode, operation) {
   );
 }
 
-const get    = (store, key)        => exec(store, 'readonly',  (s) => s.get(key));
-const getAll = (store)             => exec(store, 'readonly',  (s) => s.getAll());
-const put    = (store, key, value) => exec(store, 'readwrite', (s) => s.put(value, key));
-const remove = (store, key)        => exec(store, 'readwrite', (s) => s.delete(key));
+const get = (store, key) => exec(store, 'readonly', (s) => s.get(key));
+const getAll = (store) => exec(store, 'readonly', (s) => s.getAll());
+const put = (store, key, value) =>
+  exec(store, 'readwrite', (s) => s.put(value, key));
+const remove = (store, key) => exec(store, 'readwrite', (s) => s.delete(key));
 
 function clear() {
   return getDB().then(
@@ -109,16 +110,18 @@ function batch(storeName, operations) {
 
 function createStoreAccessor(storeName) {
   return Object.freeze({
-    get:    (key)        => get(storeName, key),
-    getAll: ()           => getAll(storeName),
-    put:    (key, value) => put(storeName, key, value),
-    remove: (key)        => remove(storeName, key),
-    batch:  (ops)        => batch(storeName, ops),
+    get: (key) => get(storeName, key),
+    getAll: () => getAll(storeName),
+    put: (key, value) => put(storeName, key, value),
+    remove: (key) => remove(storeName, key),
+    batch: (ops) => batch(storeName, ops),
   });
 }
 
 export const db = Object.freeze({
-  ...Object.fromEntries(ALL_STORES.map((name) => [name, createStoreAccessor(name)])),
+  ...Object.fromEntries(
+    ALL_STORES.map((name) => [name, createStoreAccessor(name)]),
+  ),
   clear,
   destroy() {
     if (dbInstance) {

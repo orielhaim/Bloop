@@ -1,7 +1,11 @@
-import { SimplePool, generateSecretKey, finalizeEvent } from 'nostr-tools';
+import { finalizeEvent, generateSecretKey, SimplePool } from 'nostr-tools';
 import { useCallStore } from '../store/callStore';
-import { decryptFromSender, encryptEnvelope, encryptForRecipient } from './crypto';
 import { getKeys as fetchKeys } from './api';
+import {
+  decryptFromSender,
+  encryptEnvelope,
+  encryptForRecipient,
+} from './crypto';
 import { mine, verify } from './pow';
 import { getSettings } from './settings';
 
@@ -11,7 +15,8 @@ const DEFAULT_POW_DIFFICULTY = 10;
 function base64UrlToHex(b64url) {
   const raw = atob(b64url.replace(/-/g, '+').replace(/_/g, '/'));
   const hex = new Array(raw.length);
-  for (let i = 0; i < raw.length; i++) hex[i] = raw.charCodeAt(i).toString(16).padStart(2, '0');
+  for (let i = 0; i < raw.length; i++)
+    hex[i] = raw.charCodeAt(i).toString(16).padStart(2, '0');
   return hex.join('');
 }
 
@@ -46,14 +51,16 @@ function parseEventContent(raw) {
 
 async function verifyPoW(message) {
   const { encryptedData, nonce, difficulty } = message;
-  if (!encryptedData || nonce === undefined || difficulty === undefined) return null;
+  if (!encryptedData || nonce === undefined || difficulty === undefined)
+    return null;
   const valid = await verify(encryptedData, nonce, difficulty);
   return valid ? encryptedData : null;
 }
 
 function parseEnvelope(dataString) {
   const content = parseEventContent(dataString);
-  if (!content?.ciphertext || !content?.nonce || !content?.ephemeralPublicKey) return null;
+  if (!content?.ciphertext || !content?.nonce || !content?.ephemeralPublicKey)
+    return null;
   return content;
 }
 
@@ -97,11 +104,21 @@ async function handleIncomingEvent(event, myKeys) {
   const senderKeys = await fetchKeys(outer.senderNumber);
   if (!senderKeys) return;
 
-  const inner = await decryptInner(outer.secret, senderKeys.encryptionKey, myKeys);
+  const inner = await decryptInner(
+    outer.secret,
+    senderKeys.encryptionKey,
+    myKeys,
+  );
   if (!inner) return;
 
   console.log(`Incoming call from ${outer.senderNumber}`);
-  useCallStore.getState().receiveIncomingCall(outer.senderNumber, inner.callRoom, inner.callPassword);
+  useCallStore
+    .getState()
+    .receiveIncomingCall(
+      outer.senderNumber,
+      inner.callRoom,
+      inner.callPassword,
+    );
 }
 
 let activeSubscription = null;
@@ -109,7 +126,7 @@ let activeSubscription = null;
 export async function initNostrService(myNumber, myKeys) {
   cleanupNostrService();
 
-  const myPubHex = base64UrlToHex((myKeys.encryption.public?.x));
+  const myPubHex = base64UrlToHex(myKeys.encryption.public?.x);
   const settings = await getSettings();
 
   activeSubscription = getPool().subscribe(
@@ -131,7 +148,11 @@ export async function initNostrService(myNumber, myKeys) {
   );
 
   useCallStore.getState().setRelayConnection(true);
-  console.log('Nostr service initialized. Listening for messages to:', myPubHex, myNumber);
+  console.log(
+    'Nostr service initialized. Listening for messages to:',
+    myPubHex,
+    myNumber,
+  );
 }
 
 export function cleanupNostrService() {
@@ -142,7 +163,13 @@ export function cleanupNostrService() {
   useCallStore.getState().setRelayConnection(false);
 }
 
-async function buildEncryptedPayload(targetKeys, myKeys, myNumber, callRoom, callPassword) {
+async function buildEncryptedPayload(
+  targetKeys,
+  myKeys,
+  myNumber,
+  callRoom,
+  callPassword,
+) {
   const secret = await encryptForRecipient(
     myKeys.encryption.private,
     targetKeys.encryptionKey,
@@ -155,8 +182,21 @@ async function buildEncryptedPayload(targetKeys, myKeys, myNumber, callRoom, cal
   );
 }
 
-export async function sendCallSignal(targetNumber, targetKeys, myNumber, myKeys, callRoom, callPassword) {
-  const envelope = await buildEncryptedPayload(targetKeys, myKeys, myNumber, callRoom, callPassword);
+export async function sendCallSignal(
+  targetNumber,
+  targetKeys,
+  myNumber,
+  myKeys,
+  callRoom,
+  callPassword,
+) {
+  const envelope = await buildEncryptedPayload(
+    targetKeys,
+    myKeys,
+    myNumber,
+    callRoom,
+    callPassword,
+  );
 
   const envelopeString = JSON.stringify(envelope);
   const nonce = await mine(envelopeString, DEFAULT_POW_DIFFICULTY);

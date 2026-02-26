@@ -1,8 +1,8 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import ProtectedRoute from './components/ProtectedRoute';
 import Entry from './pages/Entry';
 import Home from './pages/Home';
 import Settings from './pages/Settings';
-import ProtectedRoute from './components/ProtectedRoute';
 import './index.css';
 
 function App() {

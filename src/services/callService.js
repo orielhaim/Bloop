@@ -21,9 +21,9 @@ function buildConfig(settings, callPassword) {
         {
           urls: settings.turnServer.urls,
           username: settings.turnServer.username,
-          credential: settings.turnServer.credential
-        }
-      ]
+          credential: settings.turnServer.credential,
+        },
+      ],
     };
   }
 
@@ -32,7 +32,7 @@ function buildConfig(settings, callPassword) {
 
 function stopAllTracks(stream) {
   if (!stream) return;
-  stream.getTracks().forEach(track => {
+  stream.getTracks().forEach((track) => {
     track.stop();
     stream.removeTrack(track);
   });
@@ -45,7 +45,6 @@ function cleanupLocalVideo() {
     useCallStore.getState().disableLocalVideo();
   }
 }
-
 
 export async function startCallSession(
   callRoom,
@@ -80,7 +79,7 @@ export async function startCallSession(
     }
   });
 
-  room.onPeerJoin(peerId => {
+  room.onPeerJoin((peerId) => {
     console.log('[call] Peer joined:', peerId);
     onStatusChange('Connected');
 
@@ -94,7 +93,7 @@ export async function startCallSession(
     }
   });
 
-  room.onPeerLeave(peerId => {
+  room.onPeerLeave((peerId) => {
     console.log('[call] Peer left:', peerId);
     onStatusChange('Call Ended');
     useCallStore.getState().clearRemoteVideoStream();
@@ -112,7 +111,14 @@ export async function startCallSession(
   });
 
   room.onPeerTrack((track, stream, peerId, metadata) => {
-    console.log('[call] Received track', track.kind, 'from', peerId, 'metadata:', metadata);
+    console.log(
+      '[call] Received track',
+      track.kind,
+      'from',
+      peerId,
+      'metadata:',
+      metadata,
+    );
 
     if (track.kind === 'video') {
       useCallStore.getState().setRemoteVideoStream(stream);

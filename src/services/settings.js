@@ -1,11 +1,11 @@
-import { encryptData, decryptData } from './crypto';
+import { decryptData, encryptData } from './crypto';
 
 const SETTINGS_KEY = 'encrypted_settings';
 
 export const DEFAULT_RELAYS = [
   'wss://nos.lol',
   'wss://nostr.mom',
-  'wss://relay.snort.social'
+  'wss://relay.snort.social',
 ];
 
 export const DEFAULT_SETTINGS = {
@@ -14,8 +14,8 @@ export const DEFAULT_SETTINGS = {
     enabled: false,
     urls: '',
     username: '',
-    credential: ''
-  }
+    credential: '',
+  },
 };
 
 export async function getSettings() {
@@ -23,11 +23,16 @@ export async function getSettings() {
   if (!encrypted) return DEFAULT_SETTINGS;
 
   try {
-    const buffer = Uint8Array.from(atob(encrypted), c => c.charCodeAt(0)).buffer;
+    const buffer = Uint8Array.from(atob(encrypted), (c) =>
+      c.charCodeAt(0),
+    ).buffer;
     const settings = await decryptData(buffer);
     return { ...DEFAULT_SETTINGS, ...settings }; // Merge with defaults
   } catch (e) {
-    console.warn("Failed to decrypt settings (vault might be locked or data corrupted), returning defaults", e);
+    console.warn(
+      'Failed to decrypt settings (vault might be locked or data corrupted), returning defaults',
+      e,
+    );
     return DEFAULT_SETTINGS;
   }
 }

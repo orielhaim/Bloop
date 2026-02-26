@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
+import { FaPhone, FaPhoneSlash, FaUser } from 'react-icons/fa6';
+import {
+  getContactByNumber,
+  getContactDisplayName,
+} from '../../services/contactsManager';
 import { useCallStore } from '../../store/callStore';
-import { getContactByNumber, getContactDisplayName } from '../../services/contactsManager';
-import { FaPhone, FaPhoneSlash, FaUser } from "react-icons/fa6";
 
 export default function IncomingCall() {
-  const callerNumber = useCallStore(state => state.callerNumber);
-  const answerCall = useCallStore(state => state.answerCall);
-  const rejectCall = useCallStore(state => state.rejectCall);
-  const ignoreCall = useCallStore(state => state.ignoreCall);
-  const callState = useCallStore(state => state.callState);
+  const callerNumber = useCallStore((state) => state.callerNumber);
+  const answerCall = useCallStore((state) => state.answerCall);
+  const rejectCall = useCallStore((state) => state.rejectCall);
+  const ignoreCall = useCallStore((state) => state.ignoreCall);
+  const callState = useCallStore((state) => state.callState);
   const [contactName, setContactName] = useState(null);
 
   useEffect(() => {
@@ -27,7 +30,8 @@ export default function IncomingCall() {
     }
     getContactByNumber(callerNumber)
       .then((contact) => {
-        if (active) setContactName(contact ? getContactDisplayName(contact) : null);
+        if (active)
+          setContactName(contact ? getContactDisplayName(contact) : null);
       })
       .catch(() => {
         if (active) setContactName(null);
@@ -45,9 +49,17 @@ export default function IncomingCall() {
             <FaUser className="w-16 h-16 opacity-60" />
           </div>
         </div>
-        <div className="text-xs font-semibold tracking-widest text-base-content/50 uppercase">Incoming Call</div>
-        <div className="text-4xl font-semibold mt-3">{contactName || callerNumber}</div>
-        {contactName && <div className="text-sm text-base-content/60 font-mono mt-1">{callerNumber}</div>}
+        <div className="text-xs font-semibold tracking-widest text-base-content/50 uppercase">
+          Incoming Call
+        </div>
+        <div className="text-4xl font-semibold mt-3">
+          {contactName || callerNumber}
+        </div>
+        {contactName && (
+          <div className="text-sm text-base-content/60 font-mono mt-1">
+            {callerNumber}
+          </div>
+        )}
       </div>
 
       <div className="flex w-full max-w-sm justify-between pb-8">
@@ -58,7 +70,9 @@ export default function IncomingCall() {
           >
             <FaPhoneSlash className="w-8 h-8 text-white" />
           </button>
-          <span className="text-sm font-medium text-base-content/70">Decline</span>
+          <span className="text-sm font-medium text-base-content/70">
+            Decline
+          </span>
         </div>
         <div className="flex flex-col items-center gap-2">
           <button
@@ -67,7 +81,9 @@ export default function IncomingCall() {
           >
             <FaPhone className="w-8 h-8 text-white" />
           </button>
-          <span className="text-sm font-medium text-base-content/70">Accept</span>
+          <span className="text-sm font-medium text-base-content/70">
+            Accept
+          </span>
         </div>
       </div>
     </div>
