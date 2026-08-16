@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use specta::Type;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemeDocument {
     pub id: String,
@@ -12,7 +13,7 @@ pub struct ThemeDocument {
     pub motion: MotionTokens,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemeTokens {
     pub shell: String,
@@ -39,7 +40,7 @@ fn radius() -> f32 {
     28.0
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MotionTokens {
     pub peek: Spring,
@@ -91,7 +92,7 @@ impl Default for MotionTokens {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Spring {
     pub stiffness: f32,

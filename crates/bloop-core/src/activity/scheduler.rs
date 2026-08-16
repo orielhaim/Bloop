@@ -54,9 +54,7 @@ impl ActivityScheduler {
         let current_coalesces = self
             .current
             .as_ref()
-            .is_some_and(|current| {
-                same_activity_or_slot(&current.snapshot, &incoming.snapshot)
-            });
+            .is_some_and(|current| same_activity_or_slot(&current.snapshot, &incoming.snapshot));
         if current_coalesces {
             self.current = Some(incoming);
             return self.view();
@@ -143,6 +141,19 @@ impl ActivityScheduler {
             .is_some_and(|c| c.snapshot.activity_id == activity_id)
         {
             self.parked = None;
+        }
+        self.view()
+    }
+
+    pub fn dismiss_plugin(&mut self, plugin_id: &str) -> ScheduledView {
+        let ids: Vec<String> = self
+            .latest
+            .values()
+            .filter(|snapshot| snapshot.plugin_id == plugin_id)
+            .map(|snapshot| snapshot.activity_id.clone())
+            .collect();
+        for id in ids {
+            self.dismiss(&id);
         }
         self.view()
     }
@@ -280,8 +291,7 @@ impl ActivityScheduler {
 
 fn same_activity_or_slot(left: &ActivitySnapshot, right: &ActivitySnapshot) -> bool {
     left.activity_id == right.activity_id
-        || (left.coalescing_key.is_some()
-            && left.coalescing_key == right.coalescing_key)
+        || (left.coalescing_key.is_some() && left.coalescing_key == right.coalescing_key)
 }
 
 #[cfg(test)]
@@ -406,10 +416,26 @@ mod tests {
     }
 
     #[test]
+    fn dismiss_plugin_removes_all_activities_for_that_plugin() {
+        let mut scheduler = ActivityScheduler::default();
+        let now = Instant::now();
+        scheduler.publish(
+            snap("now-playing", 40, PresentationMode::Compact, None),
+            now,
+        );
+        scheduler.dismiss_plugin("test");
+        assert!(scheduler.view().activity.is_none());
+        assert!(scheduler.all().is_empty());
+    }
+
+    #[test]
     fn updates_extend_presentation_timeout() {
         let mut scheduler = ActivityScheduler::default();
         let now = Instant::now();
-        scheduler.publish(snap("volume", 60, PresentationMode::Presentation, Some(200)), now);
+        scheduler.publish(
+            snap("volume", 60, PresentationMode::Presentation, Some(200)),
+            now,
+        );
         let view = scheduler.view();
         assert_eq!(view.activity.unwrap().activity_id, "volume");
 
@@ -430,7 +456,10 @@ mod tests {
     fn same_face_update_still_extends_timeout() {
         let mut scheduler = ActivityScheduler::default();
         let now = Instant::now();
-        scheduler.publish(snap("volume", 60, PresentationMode::Presentation, Some(100)), now);
+        scheduler.publish(
+            snap("volume", 60, PresentationMode::Presentation, Some(100)),
+            now,
+        );
         scheduler.touch("volume", now + std::time::Duration::from_millis(90));
         scheduler.tick(now + std::time::Duration::from_millis(150));
         assert_eq!(
@@ -447,7 +476,10 @@ mod tests {
         let mut scheduler = ActivityScheduler::default();
         let now = Instant::now();
         scheduler.publish(snap("now-playing", 40, PresentationMode::Peek, None), now);
-        scheduler.publish(snap("volume", 60, PresentationMode::Presentation, Some(50)), now);
+        scheduler.publish(
+            snap("volume", 60, PresentationMode::Presentation, Some(50)),
+            now,
+        );
         assert_eq!(scheduler.view().activity.unwrap().activity_id, "volume");
 
         // While volume presents, now-playing updates its snapshot.
@@ -502,5 +534,148 @@ mod tests {
         assert_eq!(scheduler.view().activity.unwrap().activity_id, "bluetooth");
         scheduler.tick(now + std::time::Duration::from_millis(150));
         assert_eq!(scheduler.view().activity.unwrap().activity_id, "volume");
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::time::Duration;
+
+    fn snap(
+        id: &str,
+        priority: u8,
+        mode: PresentationMode,
+        lifetime: Option<u32>,
+    ) -> ActivitySnapshot {
+        ActivitySnapshot {
+            activity_id: id.into(),
+            plugin_id: "prop".into(),
+            priority,
+            mode,
+            lifetime_ms: lifetime,
+            interruptible: true,
+            compact: None,
+            peek: None,
+            presentation: None,
+            expanded: None,
+            preview: None,
+            timestamp_ms: 0,
+            coalescing_key: None,
+            preferred_size: None,
+        }
+    }
+
+    proptest! {
+        /// A one-shot transient presentation must never reappear after it
+        /// expires, no matter how many later ticks run.
+        #[test]
+        fn expired_transient_never_returns(
+            priority in 1u8..255,
+            lifetime_ms in 1u32..10_000u32,
+        ) {
+            let mut scheduler = ActivityScheduler::default();
+            let now = Instant::now();
+            scheduler.publish(
+                snap("volume", priority, PresentationMode::Presentation, Some(lifetime_ms)),
+                now,
+            );
+            for step in 0..20u64 {
+                let at = now + Duration::from_millis(lifetime_ms as u64 + 1 + step * 137);
+                scheduler.tick(at);
+                let view = scheduler.view();
+                if let Some(activity) = &view.activity {
+                    assert_ne!(
+                        activity.activity_id, "volume",
+                        "expired transient must not be current at {step}"
+                    );
+                } else {
+                    assert_eq!(view.presence, Presence::Resting);
+                }
+            }
+        }
+
+        /// View invariants hold for arbitrary interleavings of publishes and
+        /// ticks: presence always matches the current activity's mode, and an
+        /// absent activity implies the resting presence.
+        #[test]
+        fn view_consistency_under_random_operations(
+            priorities in proptest::collection::vec(1u8..200u8, 1..8),
+            modes in proptest::collection::vec(0u8..3u8, 1..8),
+            lifetimes in proptest::collection::vec(0u32..2_000u32, 1..8),
+            tick_deltas in proptest::collection::vec(0u64..5_000u64, 1..8),
+        ) {
+            let mut scheduler = ActivityScheduler::default();
+            let base = Instant::now();
+            for index in 0..8 {
+                let mode = match modes.get(index).copied().unwrap_or(0) {
+                    0 => PresentationMode::Compact,
+                    1 => PresentationMode::Peek,
+                    _ => PresentationMode::Presentation,
+                };
+                let lifetime = lifetimes
+                    .get(index)
+                    .copied()
+                    .filter(|ms| *ms > 0 && mode == PresentationMode::Presentation)
+                    .map(|ms| ms as u32);
+                scheduler.publish(
+                    snap(
+                        &format!("a{index}"),
+                        priorities.get(index).copied().unwrap_or(40),
+                        mode,
+                        lifetime,
+                    ),
+                    base,
+                );
+                let view = scheduler.view();
+                match (&view.activity, view.presence) {
+                    (Some(activity), presence) => {
+                        let expected = match activity.mode {
+                            PresentationMode::Compact => Presence::Resting,
+                            PresentationMode::Peek => Presence::Peek,
+                            PresentationMode::Presentation => Presence::Presentation,
+                            PresentationMode::Expanded => Presence::Expanded,
+                        };
+                        assert_eq!(presence, expected, "presence must match current mode");
+                    }
+                    (None, presence) => assert_eq!(presence, Presence::Resting),
+                }
+                scheduler.tick(
+                    base + Duration::from_millis(
+                        tick_deltas.get(index).copied().unwrap_or(0) + index as u64,
+                    ),
+                );
+            }
+        }
+
+        /// Updating the same activity many times never grows the queue, and the
+        /// current view always reflects the latest published face.
+        #[test]
+        fn same_activity_updates_do_not_queue(
+            updates in 1..40usize,
+        ) {
+            let mut scheduler = ActivityScheduler::default();
+            let base = Instant::now();
+            scheduler.publish(
+                snap("volume", 60, PresentationMode::Presentation, Some(2_000)),
+                base,
+            );
+            for _ in 0..updates {
+                scheduler.publish(
+                    snap("volume", 60, PresentationMode::Presentation, Some(2_000)),
+                    base,
+                );
+                assert_eq!(
+                    scheduler.queue.len(),
+                    0,
+                    "repeated updates must not accumulate in the queue"
+                );
+                assert_eq!(
+                    scheduler.view().activity.as_ref().map(|a| &a.activity_id),
+                    Some(&"volume".to_string())
+                );
+            }
+        }
     }
 }

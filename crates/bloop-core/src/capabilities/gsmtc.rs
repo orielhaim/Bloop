@@ -218,6 +218,13 @@ fn refresh_sessions(
                     update_one(&session_for_events, &state_ref, &service_ref, false);
                     Ok(())
                 }));
+                let session_for_events = session.clone();
+                let state_ref = state.clone();
+                let service_ref = on_event.clone();
+                let _ = session.TimelinePropertiesChanged(&TypedEventHandler::new(move |_, _| {
+                    update_one(&session_for_events, &state_ref, &service_ref, false);
+                    Ok(())
+                }));
             }
             mapped.push(snapshot);
         }
@@ -263,12 +270,17 @@ fn update_one(
                 .is_some_and(|id| item.id == id.to_string())
         })
         .cloned();
-    let Some((snapshot, artwork)) = snapshot_session(session, cached.as_ref(), refresh_properties)
-    else {
+    let refresh = refresh_properties
+        || cached.as_ref().is_some_and(|item| {
+            super::media::is_placeholder_title(&item.title, &item.app_id, &item.app_name)
+                || item.position_ms > snapshot_position_hint(session).saturating_add(1_500)
+        });
+    let Some((snapshot, artwork)) = snapshot_session(session, cached.as_ref(), refresh) else {
         return;
     };
     let changed = {
         let mut guard = state.lock();
+        let mut changed = artwork.is_some();
         if let Some(bytes) = artwork {
             guard.artwork.insert(snapshot.id.clone(), bytes);
         }
@@ -277,7 +289,7 @@ fn update_one(
             .iter_mut()
             .find(|item| item.id == snapshot.id)
         {
-            let changed = !existing.same_face(&snapshot);
+            changed |= !existing.same_face(&snapshot) || existing.position_jumped(&snapshot);
             *existing = snapshot.clone();
             changed
         } else {
@@ -410,13 +422,25 @@ fn snapshot_session(
             app_id: app_id.clone(),
             app_name: cached
                 .map(|item| item.app_name.clone())
+                .filter(|name| !looks_like_aumid(name))
                 .unwrap_or_else(|| app_name_from_aumid(&app_id)),
-            title: props
-                .as_ref()
-                .and_then(|props| props.Title().ok())
-                .map(|value| value.to_string())
-                .or_else(|| cached.map(|item| item.title.clone()))
-                .unwrap_or_default(),
+            title: {
+                let fetched = props
+                    .as_ref()
+                    .and_then(|props| props.Title().ok())
+                    .map(|value| value.to_string())
+                    .unwrap_or_default();
+                if super::media::is_placeholder_title(&fetched, &app_id, "") {
+                    cached
+                        .map(|item| item.title.clone())
+                        .filter(|title| !super::media::is_placeholder_title(title, &app_id, ""))
+                        .unwrap_or(fetched)
+                } else if fetched.is_empty() {
+                    cached.map(|item| item.title.clone()).unwrap_or_default()
+                } else {
+                    fetched
+                }
+            },
             artist: props
                 .as_ref()
                 .and_then(|props| props.Artist().ok())
@@ -546,6 +570,7 @@ fn duration_ms(timespan: windows::Foundation::TimeSpan) -> u64 {
     (timespan.Duration.max(0) / 10_000) as u64
 }
 
+#[cfg(windows)]
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -553,12 +578,32 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(windows)]
+fn snapshot_position_hint(
+    session: &windows::Media::Control::GlobalSystemMediaTransportControlsSession,
+) -> u64 {
+    session
+        .GetTimelineProperties()
+        .ok()
+        .and_then(|timeline| timeline.Position().ok())
+        .map(duration_ms)
+        .unwrap_or(0)
+}
+
+#[cfg(windows)]
+fn looks_like_aumid(value: &str) -> bool {
+    value.contains('!') || value.contains('_') || value.contains('.')
+}
+
+#[cfg(windows)]
 fn app_name_from_aumid(app_id: &str) -> String {
-    let file = app_id.split('!').next().unwrap_or(app_id);
-    let name = file
-        .rsplit('\\')
+    if let Some((_, identity)) = app_id.rsplit_once('!') {
+        return identity.to_string();
+    }
+    app_id
+        .rsplit(['\\', '/'])
         .next()
-        .unwrap_or(file)
-        .trim_end_matches(".exe");
-    name.replace('.', " ")
+        .unwrap_or(app_id)
+        .trim_end_matches(".exe")
+        .to_string()
 }

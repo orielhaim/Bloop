@@ -1,6 +1,38 @@
-use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+use serde::{Deserialize, Serialize};
+use specta::Type;
+
+/// An arbitrary JSON value with a TS-safe number representation (f64). Used for
+/// plugin settings so the typed bridge exports `Record<string, JsonValue>`
+/// instead of BigInt-incompatible `serde_json::Value`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+#[serde(untagged)]
+pub enum JsonValue {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+    Array(Vec<JsonValue>),
+    Object(BTreeMap<String, JsonValue>),
+}
+
+impl JsonValue {
+    /// Render a setting for `get_setting` the way serde_json::Value did:
+    /// strings return their raw text, scalars their display form, and composite
+    /// values their compact JSON.
+    pub fn setting_string(&self) -> String {
+        match self {
+            Self::Null => "null".into(),
+            Self::Bool(value) => value.to_string(),
+            Self::Number(value) => value.to_string(),
+            Self::String(value) => value.clone(),
+            other => serde_json::to_string(other).unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub island_enabled: bool,
@@ -11,14 +43,14 @@ pub struct AppSettings {
     pub hover_open_ms: u32,
     pub hover_close_ms: u32,
     pub reduced_motion: Option<bool>,
-    pub enabled_plugins: std::collections::BTreeMap<String, bool>,
+    pub enabled_plugins: BTreeMap<String, bool>,
     pub layout: HomeLayout,
-    pub plugin_settings: std::collections::BTreeMap<String, serde_json::Value>,
+    pub plugin_settings: BTreeMap<String, BTreeMap<String, JsonValue>>,
     #[serde(default)]
     pub idle_provider: IdleProvider,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Type)]
 #[serde(tag = "mode", rename_all = "camelCase")]
 pub enum MonitorPreference {
     Primary,
@@ -44,7 +76,7 @@ impl Default for AppSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Type)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum IdleProvider {
     Clock,
@@ -59,7 +91,7 @@ impl Default for IdleProvider {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HomeLayout {
     pub items: Vec<String>,
@@ -93,10 +125,7 @@ impl SettingsService {
     pub fn plugin_setting(&self, plugin_id: &str, key: &str) -> Option<String> {
         let settings = self.inner.lock();
         let value = settings.plugin_settings.get(plugin_id)?.get(key)?;
-        match value {
-            serde_json::Value::String(text) => Some(text.clone()),
-            other => Some(other.to_string()),
-        }
+        Some(value.setting_string())
     }
 }
 

@@ -1,9 +1,11 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use specta::Type;
 
 use crate::error::{EngineError, EngineResult};
 use crate::metrics::{ABI_VERSION, ENGINE_VERSION, PACKAGE_FORMAT};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, Type)]
 pub struct PluginManifest {
     pub id: String,
     pub name: String,
@@ -37,7 +39,7 @@ fn default_api() -> String {
     "1".into()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Type)]
 pub struct Provides {
     #[serde(default)]
     pub activity: bool,
@@ -66,7 +68,7 @@ fn default_widget() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema, Type)]
 pub struct Permissions {
     #[serde(default)]
     pub network: Vec<String>,
@@ -80,7 +82,7 @@ pub struct Permissions {
     pub devices: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, Type)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum SettingField {
     Boolean {
@@ -144,7 +146,7 @@ pub enum SettingField {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Type)]
 pub struct SelectOption {
     pub value: String,
     pub label: String,
@@ -205,6 +207,12 @@ impl PluginManifest {
         }
         let _ = PACKAGE_FORMAT;
         Ok(())
+    }
+
+    /// JSON Schema for the manifest shape, generated from the Rust types so
+    /// tooling and SDK docs always match the real parser.
+    pub fn json_schema() -> schemars::Schema {
+        schemars::schema_for!(PluginManifest)
     }
 }
 
@@ -280,6 +288,15 @@ widget = false
         )
         .unwrap();
         assert!(!manifest.provides.widget);
+    }
+
+    #[test]
+    fn json_schema_generates() {
+        let schema = PluginManifest::json_schema();
+        let json = serde_json::to_string(&schema).unwrap();
+        assert!(json.contains("id"));
+        assert!(json.contains("settings"));
+        assert!(json.contains("SettingField"));
     }
 
     #[test]

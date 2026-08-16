@@ -1,12 +1,12 @@
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use specta::Type;
 
 use super::manifest::PluginManifest;
 use crate::error::{EngineError, EngineResult};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginRecord {
     pub id: String,
@@ -21,7 +21,7 @@ pub struct PluginRecord {
     pub state: PluginLifecycle,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Type)]
 #[serde(rename_all = "camelCase")]
 pub enum PluginLifecycle {
     Discovered,
@@ -86,8 +86,7 @@ pub fn load_package(
         .entry
         .clone()
         .unwrap_or_else(|| "component.wasm".into());
-    let component = root.join(entry);
-    let component_path = component.exists().then_some(component);
+    let component_path = resolve_component(root, &entry);
     let theme = ["theme/theme.toml", "theme.toml"]
         .into_iter()
         .map(|rel| root.join(rel))
@@ -108,68 +107,195 @@ pub fn load_package(
     Ok((manifest, root.to_path_buf(), component_path, theme))
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct NamespacedStore {
-    namespaces: BTreeMap<String, BTreeMap<String, String>>,
+/// Locate the wasm component for a plugin package.
+///
+/// Dev builds keep `plugin.toml` in the source tree and write `component.wasm`
+/// to `target/{debug,release}/plugins/<dir>/` via xtask. Packaged builds place
+/// the file next to the manifest.
+pub fn resolve_component(root: &Path, entry: &str) -> Option<PathBuf> {
+    let local = root.join(entry);
+    if local.is_file() {
+        return Some(local);
+    }
+    let plugin_name = root.file_name()?;
+    for ancestor in root.ancestors().skip(1) {
+        for profile in ["debug", "release"] {
+            let candidate = ancestor
+                .join("target")
+                .join(profile)
+                .join("plugins")
+                .join(plugin_name)
+                .join(entry);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
-impl NamespacedStore {
+/// Crash-safe, transactional plugin storage backed by redb. Namespaced by
+/// plugin id so one plugin can never read or overwrite another's keys.
+pub struct PluginStore {
+    db: parking_lot::Mutex<redb::Database>,
+}
+
+const TABLE: redb::TableDefinition<(&str, &str), &str> = redb::TableDefinition::new("plugins");
+
+impl PluginStore {
+    /// Open (or create) the store at `path`, or an in-memory store when no
+    /// path is given.
+    pub fn open(path: Option<&Path>) -> EngineResult<Self> {
+        let db = match path {
+            Some(path) => {
+                if let Some(parent) = path.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|error| EngineError::Configuration(error.to_string()))?;
+                }
+                redb::Database::create(path)
+                    .map_err(|error| EngineError::Configuration(error.to_string()))?
+            }
+            None => redb::Database::builder()
+                .create_with_backend(redb::backends::InMemoryBackend::new())
+                .map_err(|error| EngineError::Configuration(error.to_string()))?,
+        };
+        let write = db
+            .begin_write()
+            .map_err(|error| EngineError::Configuration(error.to_string()))?;
+        write
+            .open_table(TABLE)
+            .map_err(|error| EngineError::Configuration(error.to_string()))?;
+        write
+            .commit()
+            .map_err(|error| EngineError::Configuration(error.to_string()))?;
+        Ok(Self {
+            db: parking_lot::Mutex::new(db),
+        })
+    }
+
     pub fn get(&self, plugin_id: &str, key: &str) -> Option<String> {
-        self.namespaces.get(plugin_id)?.get(key).cloned()
+        use redb::ReadableDatabase;
+        let db = self.db.lock();
+        let read = db.begin_read().ok()?;
+        let table = read.open_table(TABLE).ok()?;
+        table
+            .get((plugin_id, key))
+            .ok()
+            .flatten()
+            .map(|value| value.value().to_string())
     }
 
-    pub fn set(&mut self, plugin_id: &str, key: &str, value: String) {
-        self.namespaces
-            .entry(plugin_id.to_string())
-            .or_default()
-            .insert(key.to_string(), value);
-    }
-
-    pub fn delete(&mut self, plugin_id: &str, key: &str) {
-        if let Some(ns) = self.namespaces.get_mut(plugin_id) {
-            ns.remove(key);
+    pub fn set(&self, plugin_id: &str, key: &str, value: String) -> EngineResult<()> {
+        let db = self.db.lock();
+        let write = db
+            .begin_write()
+            .map_err(|error| EngineError::Configuration(error.to_string()))?;
+        {
+            let mut table = write
+                .open_table(TABLE)
+                .map_err(|error| EngineError::Configuration(error.to_string()))?;
+            table
+                .insert((plugin_id, key), value.as_str())
+                .map_err(|error| EngineError::Configuration(error.to_string()))?;
         }
+        write
+            .commit()
+            .map_err(|error| EngineError::Configuration(error.to_string()))
+    }
+
+    pub fn delete(&self, plugin_id: &str, key: &str) -> EngineResult<()> {
+        let db = self.db.lock();
+        let write = db
+            .begin_write()
+            .map_err(|error| EngineError::Configuration(error.to_string()))?;
+        {
+            let mut table = write
+                .open_table(TABLE)
+                .map_err(|error| EngineError::Configuration(error.to_string()))?;
+            table
+                .remove((plugin_id, key))
+                .map_err(|error| EngineError::Configuration(error.to_string()))?;
+        }
+        write
+            .commit()
+            .map_err(|error| EngineError::Configuration(error.to_string()))
     }
 
     pub fn list(&self, plugin_id: &str) -> Vec<String> {
-        self.namespaces
-            .get(plugin_id)
-            .map(|ns| ns.keys().cloned().collect())
-            .unwrap_or_default()
-    }
-
-    pub fn load(path: &Path) -> Self {
-        std::fs::read(path)
+        use redb::{ReadableDatabase, ReadableTable};
+        let db = self.db.lock();
+        let Ok(read) = db.begin_read() else {
+            return Vec::new();
+        };
+        let Ok(table) = read.open_table(TABLE) else {
+            return Vec::new();
+        };
+        table
+            .iter()
             .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
-    }
-
-    pub fn save(&self, path: &Path) -> EngineResult<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| EngineError::Configuration(error.to_string()))?;
-        }
-        std::fs::write(
-            path,
-            serde_json::to_vec_pretty(self)
-                .map_err(|error| EngineError::Configuration(error.to_string()))?,
-        )
-        .map_err(|error| EngineError::Configuration(error.to_string()))
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .filter_map(|(key, _)| {
+                let (namespace, key) = key.value();
+                (namespace == plugin_id).then(|| key.to_string())
+            })
+            .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
-    fn storage_is_namespaced() {
-        let mut store = NamespacedStore::default();
-        store.set("a", "token", "1".into());
-        store.set("b", "token", "2".into());
+    fn storage_is_namespaced_and_persists() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("plugins.redb");
+        let store = PluginStore::open(Some(&path)).unwrap();
+        store.set("a", "token", "1".into()).unwrap();
+        store.set("b", "token", "2".into()).unwrap();
         assert_eq!(store.get("a", "token").as_deref(), Some("1"));
         assert_eq!(store.get("b", "token").as_deref(), Some("2"));
         assert!(store.get("a", "missing").is_none());
+        assert_eq!(store.list("a"), vec!["token".to_string()]);
+
+        store.delete("a", "token").unwrap();
+        assert!(store.get("a", "token").is_none());
+        drop(store);
+
+        // Reopening reads the persisted values.
+        let reopened = PluginStore::open(Some(&path)).unwrap();
+        assert_eq!(reopened.get("b", "token").as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn in_memory_store_works_without_a_path() {
+        let store = PluginStore::open(None).unwrap();
+        store.set("a", "k", "v".into()).unwrap();
+        assert_eq!(store.get("a", "k").as_deref(), Some("v"));
+    }
+
+    #[test]
+    fn resolves_xtask_component_from_workspace_target() {
+        let dir = tempdir().unwrap();
+        let plugin = dir.path().join("plugins").join("volume");
+        std::fs::create_dir_all(&plugin).unwrap();
+        let wasm = dir
+            .path()
+            .join("target")
+            .join("debug")
+            .join("plugins")
+            .join("volume")
+            .join("component.wasm");
+        std::fs::create_dir_all(wasm.parent().unwrap()).unwrap();
+        std::fs::write(&wasm, b"\0asm").unwrap();
+        assert_eq!(
+            resolve_component(&plugin, "component.wasm").as_deref(),
+            Some(wasm.as_path())
+        );
     }
 }

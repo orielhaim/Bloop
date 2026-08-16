@@ -4,6 +4,7 @@ wit_bindgen::generate!({
 });
 
 use crate::exports::bloop::abi::activity::Guest;
+use bloop::abi::media::{MediaSession, PlaybackState};
 use bloop_sdk as ui;
 use bloop_sdk::Snapshot;
 use std::sync::Mutex;
@@ -15,18 +16,17 @@ struct NowPlayingPlugin;
 
 static SESSION_ID: Mutex<Option<String>> = Mutex::new(None);
 static PLAYING: Mutex<bool> = Mutex::new(false);
-static WANT_PLAYING: Mutex<bool> = Mutex::new(false);
+static WANT_PLAYING: Mutex<Option<bool>> = Mutex::new(None);
+static WANT_POSITION: Mutex<Option<u64>> = Mutex::new(None);
 static FACE: Mutex<Option<String>> = Mutex::new(None);
-static LAST_SESSION: Mutex<Option<bloop::abi::media::MediaSession>> = Mutex::new(None);
+static LAST_POSITION: Mutex<u64> = Mutex::new(0);
+static LAST_SESSION: Mutex<Option<MediaSession>> = Mutex::new(None);
 
 impl Guest for NowPlayingPlugin {
     fn initialize() -> Result<(), String> {
-        bloop::abi::host::watch("media", "").map_err(err)?;
-        bloop::abi::host::set_timer("media-poll", 2_000);
-        match active_session() {
-            Some(session) => publish_session(Some(session)),
-            None => publish_idle(),
-        }
+        bloop::abi::host::watch(bloop::abi::capability::Capability::Media, "").map_err(err)?;
+        bloop::abi::host::set_timer("media-poll", 1_000);
+        publish_session(active_session());
         Ok(())
     }
 
@@ -35,6 +35,7 @@ impl Guest for NowPlayingPlugin {
             return Ok(());
         };
         let playing_now = *PLAYING.lock().unwrap_or_else(|e| e.into_inner());
+        let seek_to = (action_id == "seek").then(|| parse_position(&payload_json));
         let accepted = match action_id.as_str() {
             "play" => bloop::abi::host::media_play(&id),
             "pause" => bloop::abi::host::media_pause(&id),
@@ -42,7 +43,7 @@ impl Guest for NowPlayingPlugin {
             "next" => bloop::abi::host::media_next(&id),
             "previous" => bloop::abi::host::media_previous(&id),
             "stop" => bloop::abi::host::media_stop(&id),
-            "seek" => bloop::abi::host::media_seek(&id, parse_position(&payload_json)),
+            "seek" => bloop::abi::host::media_seek(&id, seek_to.unwrap_or(0)),
             "shuffle" => bloop::abi::host::media_set_shuffle(&id, payload_json.contains("true")),
             "repeat" => bloop::abi::host::media_set_repeat(&id, cycle_repeat()),
             _ => Ok(false),
@@ -54,27 +55,35 @@ impl Guest for NowPlayingPlugin {
             "toggle" => !playing_now,
             _ => playing_now,
         };
-        *WANT_PLAYING.lock().unwrap_or_else(|e| e.into_inner()) = playing;
-        match active_session() {
-            Some(session) => publish_session_with(Some(session), Some(playing)),
-            None => {
-                *PLAYING.lock().unwrap_or_else(|e| e.into_inner()) = playing;
-            }
+        if matches!(action_id.as_str(), "play" | "pause" | "stop" | "toggle") {
+            *WANT_PLAYING.lock().unwrap_or_else(|e| e.into_inner()) = Some(playing);
         }
+        if let Some(position) = seek_to {
+            *WANT_POSITION.lock().unwrap_or_else(|e| e.into_inner()) = Some(position);
+        }
+        publish_session_with(active_session(), Some(playing));
         Ok(())
     }
 
     fn on_timer(_timer_id: String) -> Result<(), String> {
-        *WANT_PLAYING.lock().unwrap_or_else(|e| e.into_inner()) = false;
         publish_session(active_session());
         Ok(())
     }
 
-    fn on_event(topic: String, _payload_json: String) -> Result<(), String> {
-        if topic != "media" {
-            return Ok(());
+    fn on_event(event: bloop::abi::capability::CapabilityEvent) -> Result<(), String> {
+        match event {
+            bloop::abi::capability::CapabilityEvent::Media(
+                bloop::abi::media::MediaEvent::SessionUpdated(session),
+            ) => {
+                publish_session(Some(remember_session(session)));
+            }
+            bloop::abi::capability::CapabilityEvent::Media(
+                bloop::abi::media::MediaEvent::SessionsChanged(sessions),
+            ) => {
+                publish_session(pick_session(&sessions).map(remember_session));
+            }
+            _ => {}
         }
-        publish_session(active_session());
         Ok(())
     }
 
@@ -84,7 +93,7 @@ impl Guest for NowPlayingPlugin {
     }
 
     fn shutdown() {
-        bloop::abi::host::unwatch("media");
+        bloop::abi::host::unwatch(bloop::abi::capability::Capability::Media);
         let _ = bloop::abi::host::dismiss(ACTIVITY_ID);
     }
 }
@@ -93,23 +102,19 @@ fn err(error: bloop::abi::types::Error) -> String {
     format!("{error:?}")
 }
 
-fn last_session() -> Option<bloop::abi::media::MediaSession> {
+fn last_session() -> Option<MediaSession> {
     LAST_SESSION
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone()
 }
 
-fn remember_session(session: bloop::abi::media::MediaSession) -> bloop::abi::media::MediaSession {
+fn remember_session(session: MediaSession) -> MediaSession {
     let mut last = LAST_SESSION.lock().unwrap_or_else(|e| e.into_inner());
     let merged = if let Some(previous) = last.as_ref().filter(|previous| previous.id == session.id)
     {
-        bloop::abi::media::MediaSession {
-            title: if session.title.is_empty() {
-                previous.title.clone()
-            } else {
-                session.title.clone()
-            },
+        MediaSession {
+            title: prefer_track_title(&session.title, &previous.title, &session.app_id),
             artist: if session.artist.is_empty() {
                 previous.artist.clone()
             } else {
@@ -119,16 +124,6 @@ fn remember_session(session: bloop::abi::media::MediaSession) -> bloop::abi::med
                 previous.album.clone()
             } else {
                 session.album.clone()
-            },
-            app_name: if session.app_name.is_empty() {
-                previous.app_name.clone()
-            } else {
-                session.app_name.clone()
-            },
-            duration_ms: if session.duration_ms == 0 {
-                previous.duration_ms
-            } else {
-                session.duration_ms
             },
             has_artwork: session.has_artwork || previous.has_artwork,
             ..session
@@ -140,30 +135,57 @@ fn remember_session(session: bloop::abi::media::MediaSession) -> bloop::abi::med
     merged
 }
 
-fn active_session() -> Option<bloop::abi::media::MediaSession> {
+fn prefer_track_title(incoming: &str, previous: &str, app_id: &str) -> String {
+    if !is_placeholder_title(incoming, app_id) {
+        incoming.to_string()
+    } else if !is_placeholder_title(previous, app_id) {
+        previous.to_string()
+    } else {
+        incoming.to_string()
+    }
+}
+
+fn is_placeholder_title(title: &str, app_id: &str) -> bool {
+    let title = title.trim();
+    if title.is_empty() {
+        return true;
+    }
+    let lower = title.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "spotify premium" | "spotify" | "now playing" | "not playing"
+    ) {
+        return true;
+    }
+    title.contains('!') || (title.contains('_') && title.len() > 24) || title == app_id
+}
+
+fn is_playing(state: PlaybackState) -> bool {
+    matches!(state, PlaybackState::Playing | PlaybackState::Changing)
+}
+
+fn pick_session(sessions: &[MediaSession]) -> Option<MediaSession> {
+    let last_id = SESSION_ID.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some(id) = last_id.as_ref()
+        && let Some(session) = sessions.iter().find(|session| &session.id == id)
+        && is_playing(session.state)
+    {
+        return Some(session.clone());
+    }
+    sessions
+        .iter()
+        .find(|session| is_playing(session.state))
+        .cloned()
+        .or_else(|| sessions.first().cloned())
+}
+
+fn active_session() -> Option<MediaSession> {
     let sessions = bloop::abi::host::media_sessions();
     let current = bloop::abi::host::media_current();
     let last_id = SESSION_ID.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let found = if let Some(id) = last_id.as_ref()
-        && let Some(session) = sessions.iter().find(|session| &session.id == id)
-        && matches!(session.state, bloop::abi::media::PlaybackState::Playing)
-    {
-        Some(session.clone())
-    } else if let Some(session) = current
-        .as_ref()
-        .filter(|session| matches!(session.state, bloop::abi::media::PlaybackState::Playing))
-    {
-        Some(session.clone())
-    } else {
-        sessions
-            .iter()
-            .find(|session| matches!(session.state, bloop::abi::media::PlaybackState::Playing))
-            .cloned()
-            .or(current)
-            .or_else(|| {
-                last_id.and_then(|id| sessions.into_iter().find(|session| session.id == id))
-            })
-    };
+    let found = pick_session(&sessions)
+        .or(current)
+        .or_else(|| last_id.and_then(|id| sessions.into_iter().find(|session| session.id == id)));
     found.map(remember_session).or_else(last_session)
 }
 
@@ -190,113 +212,100 @@ fn publish_json(snapshot: &Snapshot<'_>) {
     }
 }
 
-fn publish_session(session: Option<bloop::abi::media::MediaSession>) {
+fn publish_session(session: Option<MediaSession>) {
     publish_session_with(session, None);
 }
 
-fn publish_session_with(
-    session: Option<bloop::abi::media::MediaSession>,
-    playing_override: Option<bool>,
-) {
+fn publish_session_with(session: Option<MediaSession>, playing_override: Option<bool>) {
     let Some(session) = session else {
+        publish_idle();
         return;
     };
     *SESSION_ID.lock().unwrap_or_else(|e| e.into_inner()) = Some(session.id.clone());
-    let reported = matches!(session.state, bloop::abi::media::PlaybackState::Playing);
+    let reported = is_playing(session.state);
     let playing = if let Some(playing) = playing_override {
         playing
     } else {
         let mut want = WANT_PLAYING.lock().unwrap_or_else(|e| e.into_inner());
-        if *want {
-            if reported {
-                *want = false;
+        match *want {
+            Some(desired) if desired == reported => {
+                *want = None;
+                reported
             }
-            true
-        } else {
-            reported
+            Some(desired) => desired,
+            None => reported,
         }
     };
     *PLAYING.lock().unwrap_or_else(|e| e.into_inner()) = playing;
+    let position = {
+        let mut want = WANT_POSITION.lock().unwrap_or_else(|e| e.into_inner());
+        match *want {
+            Some(desired) if session.position_ms.abs_diff(desired) < 2_000 => {
+                *want = None;
+                session.position_ms
+            }
+            Some(desired) => desired,
+            None => session.position_ms,
+        }
+    };
+    let title = display_title(&session);
+    let artist = if session.artist.is_empty() {
+        session.album.as_str()
+    } else {
+        session.artist.as_str()
+    };
     publish_views(
         &session.id,
-        &session.title,
-        &session.artist,
-        &session.album,
-        &session.app_name,
+        title,
+        artist,
         playing,
-        session.position_ms,
+        position,
         session.duration_ms,
-        serde_json::json!({
-            "play": session.controls.play,
-            "pause": session.controls.pause,
-            "previous": session.controls.previous,
-            "next": session.controls.next,
-            "seek": session.controls.seek,
-            "shuffle": session.controls.shuffle,
-            "repeat": session.controls.repeat,
-        }),
         session.has_artwork,
+        &session.album,
     );
+}
+
+fn display_title(session: &MediaSession) -> &str {
+    if is_placeholder_title(&session.title, &session.app_id) {
+        if !session.album.is_empty() {
+            session.album.as_str()
+        } else {
+            "Now Playing"
+        }
+    } else {
+        session.title.as_str()
+    }
 }
 
 fn face_key(
     session_id: &str,
     title: &str,
     artist: &str,
-    app_name: &str,
     playing: bool,
-    has_artwork: bool,
+    artwork_src: &str,
 ) -> String {
-    format!("{session_id}|{title}|{artist}|{app_name}|{playing}|{has_artwork}")
+    format!("{session_id}|{title}|{artist}|{playing}|{artwork_src}")
 }
 
-fn commit_face(key: String) -> bool {
+fn commit_face(key: String, position: u64) -> bool {
     let mut face = FACE.lock().unwrap_or_else(|e| e.into_inner());
-    if face.as_ref() == Some(&key) {
+    let mut last_position = LAST_POSITION.lock().unwrap_or_else(|e| e.into_inner());
+    let jumped = position.abs_diff(*last_position) >= 1_000;
+    if face.as_ref() == Some(&key) && !jumped {
         return false;
     }
     *face = Some(key);
+    *last_position = position;
     true
 }
 
-fn source_label(app_name: &str) -> &str {
-    if app_name.is_empty() {
-        "Now Playing"
-    } else {
-        app_name
-    }
-}
-
-fn source_mark(app_name: &str) -> String {
-    source_label(app_name)
-        .chars()
-        .find(|ch| ch.is_alphanumeric())
-        .map(|ch| ch.to_uppercase().to_string())
-        .unwrap_or_else(|| "♪".into())
-}
-
 fn publish_idle() {
-    if !commit_face("idle".into()) {
+    if !commit_face("idle".into(), 0) {
         return;
     }
-    let idle = ui::ui_column(
-        vec![
-            ui::ui_text("Now Playing", "kicker"),
-            ui::ui_secondary("Nothing is playing"),
-        ],
-        4,
-    );
-    let preview = player_chrome(
-        "Not playing",
-        "Now Playing",
-        "Now Playing",
-        false,
-        0,
-        180_000,
-        serde_json::json!({}),
-        false,
-        "",
-    );
+    let idle = ui::ui_column(vec![ui::ui_secondary("Nothing is playing")], 4);
+    let preview = player_chrome("Not playing", "", false, 0, 180_000, false, "");
     publish_json(&Snapshot {
         activity_id: ACTIVITY_ID,
         plugin_id: PLUGIN_ID,
@@ -318,42 +327,32 @@ fn publish_idle() {
 fn player_chrome(
     title: &str,
     artist: &str,
-    app_name: &str,
     playing: bool,
     position: u64,
     duration: u64,
-    controls: serde_json::Value,
     has_artwork: bool,
     artwork_src: &str,
 ) -> serde_json::Value {
     let art = if has_artwork {
         ui::ui_artwork(artwork_src)
     } else {
-        ui::ui_badge(&source_mark(app_name))
+        ui::ui_badge("♪")
     };
-    let pause = if playing
-        && controls
-            .get("pause")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true)
-    {
-        ui::ui_icon_button_lg("pause", "pause", "Pause")
+    let toggle = if playing {
+        ui::ui_icon_button_lg("toggle", "pause", "Pause")
     } else {
-        ui::ui_icon_button_lg("play", "play", "Play")
+        ui::ui_icon_button_lg("toggle", "play", "Play")
     };
+    let mut heading = vec![ui::ui_text(title, "title")];
+    if !artist.is_empty() {
+        heading.push(ui::ui_secondary(artist));
+    }
     ui::ui_column(
         vec![
             ui::ui_row(
                 vec![
                     art,
-                    ui::ui_column(
-                        vec![
-                            ui::ui_text(source_label(app_name), "kicker"),
-                            ui::ui_text(title, "title"),
-                            ui::ui_secondary(artist),
-                        ],
-                        2,
-                    ),
+                    ui::ui_column(heading, 2),
                     ui::ui_grow(),
                     ui::ui_waveform(playing),
                 ],
@@ -364,7 +363,7 @@ fn player_chrome(
                 vec![
                     ui::ui_grow(),
                     ui::ui_icon_button("previous", "skip-back", "Previous"),
-                    pause,
+                    toggle,
                     ui::ui_icon_button("next", "skip-forward", "Next"),
                     ui::ui_grow(),
                 ],
@@ -379,38 +378,25 @@ fn publish_views(
     session_id: &str,
     title: &str,
     artist: &str,
-    album: &str,
-    app_name: &str,
     playing: bool,
     position: u64,
     duration: u64,
-    controls: serde_json::Value,
     has_artwork: bool,
+    album: &str,
 ) {
-    let title = if title.is_empty() {
-        "Not playing"
-    } else {
-        title
-    };
-    let artist = if artist.is_empty() { album } else { artist };
-    if !commit_face(face_key(
-        session_id,
-        title,
-        artist,
-        app_name,
-        playing,
-        has_artwork,
-    )) {
+    let artwork_src = format!("media:{session_id}::{title}::{album}");
+    if !commit_face(
+        face_key(session_id, title, artist, playing, &artwork_src),
+        position,
+    ) {
         return;
     }
-    let artwork_src = format!("media:{session_id}");
-    let mark = source_mark(app_name);
     let peek = ui::ui_row(
         vec![
             if has_artwork {
                 ui::ui_artwork(&artwork_src)
             } else {
-                ui::ui_badge(&mark)
+                ui::ui_badge("♪")
             },
             ui::ui_text(title, "title"),
             ui::ui_grow(),
@@ -421,11 +407,9 @@ fn publish_views(
     let chrome = player_chrome(
         title,
         artist,
-        app_name,
         playing,
         position,
         duration,
-        controls,
         has_artwork,
         &artwork_src,
     );

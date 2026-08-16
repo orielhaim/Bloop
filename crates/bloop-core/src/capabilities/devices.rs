@@ -4,6 +4,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::events::{Signal, Subscription};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DeviceKind {
@@ -93,7 +95,7 @@ impl Default for Normalizer {
 
 pub struct DeviceService {
     backend: Arc<dyn DevicesBackend>,
-    listeners: parking_lot::Mutex<Vec<Arc<dyn Fn(DeviceEvent) + Send + Sync>>>,
+    events: Signal<DeviceEvent>,
     state: parking_lot::Mutex<Normalizer>,
     debounce: Duration,
 }
@@ -116,14 +118,19 @@ impl DeviceService {
     pub fn new(backend: Arc<dyn DevicesBackend>) -> Self {
         Self {
             backend,
-            listeners: parking_lot::Mutex::new(Vec::new()),
+            events: Signal::new(),
             state: parking_lot::Mutex::new(Normalizer::default()),
             debounce: Duration::from_millis(350),
         }
     }
 
-    pub fn subscribe(&self, listener: impl Fn(DeviceEvent) + Send + Sync + 'static) {
-        self.listeners.lock().push(Arc::new(listener));
+    /// Subscribe to normalized device events; drop the subscription to
+    /// unsubscribe.
+    pub fn subscribe(
+        &self,
+        listener: impl Fn(&DeviceEvent) + Send + Sync + 'static,
+    ) -> Subscription {
+        self.events.subscribe(listener)
     }
 
     pub fn devices(&self) -> Vec<Device> {
@@ -201,10 +208,12 @@ impl DeviceService {
 
         // Reconcile pending transitions against the freshest snapshot so flapping
         // cancels a transition instead of emitting a stale event.
-        state.pending.retain(|pending| match devices.iter().find(|d| d.id == pending.id) {
-            Some(device) => device.connected == pending.connected,
-            None => !pending.connected,
-        });
+        state.pending.retain(
+            |pending| match devices.iter().find(|d| d.id == pending.id) {
+                Some(device) => device.connected == pending.connected,
+                None => !pending.connected,
+            },
+        );
 
         state.known.clear();
         let ids: HashSet<String> = devices.iter().map(|d| d.id.clone()).collect();
@@ -253,9 +262,7 @@ impl DeviceService {
 
     fn dispatch(&self, events: Vec<DeviceEvent>) {
         for event in events {
-            for listener in self.listeners.lock().iter() {
-                listener(event.clone());
-            }
+            self.events.emit(&event);
         }
     }
 }
@@ -319,30 +326,37 @@ mod tests {
 
     fn service(
         devices: Vec<Device>,
-    ) -> (Arc<DeviceService>, Arc<parking_lot::Mutex<Vec<DeviceEvent>>>) {
+    ) -> (
+        Arc<DeviceService>,
+        Arc<parking_lot::Mutex<Vec<DeviceEvent>>>,
+        crate::events::Subscription,
+    ) {
         let service = Arc::new(DeviceService::new(Arc::new(FakeDevices::new(devices))));
         let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let listener = seen.clone();
-        service.subscribe(move |event| listener.lock().push(event));
-        (service, seen)
+        let sub = service.subscribe(move |event| listener.lock().push(event.clone()));
+        (service, seen, sub)
     }
 
     #[test]
     fn startup_enumeration_is_silent() {
-        let (service, seen) = service(vec![device("buds", true, Some(84))]);
+        let (service, seen, _sub) = service(vec![device("buds", true, Some(84))]);
         service.emit_snapshot(vec![device("buds", true, Some(84))], Instant::now());
         assert!(seen.lock().is_empty(), "baseline must not emit events");
     }
 
     #[test]
     fn connection_emits_after_stability_window() {
-        let (service, seen) = service(Vec::new());
+        let (service, seen, _sub) = service(Vec::new());
         let now = Instant::now();
         service.emit_snapshot(Vec::new(), now);
         assert!(seen.lock().is_empty());
 
         service.emit_snapshot(vec![device("buds", true, None)], now);
-        assert!(seen.lock().is_empty(), "connect waits for the debounce window");
+        assert!(
+            seen.lock().is_empty(),
+            "connect waits for the debounce window"
+        );
 
         service.tick(now + Duration::from_millis(400));
         let events = seen.lock().clone();
@@ -352,34 +366,48 @@ mod tests {
 
     #[test]
     fn persistent_connection_does_not_retrigger() {
-        let (service, seen) = service(Vec::new());
+        let (service, seen, _sub) = service(Vec::new());
         let now = Instant::now();
         service.emit_snapshot(Vec::new(), now);
         service.emit_snapshot(vec![device("buds", true, None)], now);
-        service.emit_snapshot(vec![device("buds", true, None)], now + Duration::from_millis(100));
+        service.emit_snapshot(
+            vec![device("buds", true, None)],
+            now + Duration::from_millis(100),
+        );
         service.tick(now + Duration::from_millis(400));
-        assert_eq!(seen.lock().len(), 1, "persistent connection emits exactly once");
+        assert_eq!(
+            seen.lock().len(),
+            1,
+            "persistent connection emits exactly once"
+        );
     }
 
     #[test]
     fn flapping_connection_suppressed() {
-        let (service, seen) = service(Vec::new());
+        let (service, seen, _sub) = service(Vec::new());
         let now = Instant::now();
         service.emit_snapshot(Vec::new(), now);
 
         service.emit_snapshot(vec![device("buds", true, None)], now);
         service.emit_snapshot(Vec::new(), now + Duration::from_millis(100));
-        service.emit_snapshot(vec![device("buds", true, None)], now + Duration::from_millis(150));
+        service.emit_snapshot(
+            vec![device("buds", true, None)],
+            now + Duration::from_millis(150),
+        );
         service.tick(now + Duration::from_millis(400));
         assert!(seen.lock().is_empty(), "flapping must not produce events");
 
         service.tick(now + Duration::from_millis(600));
-        assert_eq!(seen.lock().len(), 1, "a stable connection eventually emits once");
+        assert_eq!(
+            seen.lock().len(),
+            1,
+            "a stable connection eventually emits once"
+        );
     }
 
     #[test]
     fn disconnection_emits() {
-        let (service, seen) = service(vec![device("buds", true, None)]);
+        let (service, seen, _sub) = service(vec![device("buds", true, None)]);
         let now = Instant::now();
         service.emit_snapshot(vec![device("buds", true, None)], now);
         assert!(seen.lock().is_empty());
@@ -393,7 +421,7 @@ mod tests {
 
     #[test]
     fn reconnect_after_disconnect_emits_again() {
-        let (service, seen) = service(vec![device("buds", true, None)]);
+        let (service, seen, _sub) = service(vec![device("buds", true, None)]);
         let now = Instant::now();
         service.emit_snapshot(vec![device("buds", true, None)], now);
         service.emit_snapshot(Vec::new(), now);
@@ -408,7 +436,7 @@ mod tests {
 
     #[test]
     fn metadata_update_emits_updated() {
-        let (service, seen) = service(vec![device("buds", true, None)]);
+        let (service, seen, _sub) = service(vec![device("buds", true, None)]);
         let now = Instant::now();
         service.emit_snapshot(vec![device("buds", true, None)], now);
         assert!(seen.lock().is_empty());
@@ -416,7 +444,9 @@ mod tests {
         service.emit_snapshot(vec![device("buds", true, Some(84))], now);
         let events = seen.lock().clone();
         assert_eq!(events.len(), 1);
-        assert!(matches!(&events[0], DeviceEvent::Updated { device } if device.battery == Some(84)));
+        assert!(
+            matches!(&events[0], DeviceEvent::Updated { device } if device.battery == Some(84))
+        );
 
         // Identical update is a duplicate and is suppressed.
         service.emit_snapshot(vec![device("buds", true, Some(84))], now);
@@ -425,7 +455,7 @@ mod tests {
 
     #[test]
     fn missing_battery_is_not_fabricated() {
-        let (service, seen) = service(Vec::new());
+        let (service, seen, _sub) = service(Vec::new());
         let now = Instant::now();
         service.emit_snapshot(Vec::new(), now);
         service.emit_snapshot(vec![device("buds", true, None)], now);
@@ -439,7 +469,7 @@ mod tests {
 
     #[test]
     fn unconnected_presence_does_not_connect() {
-        let (service, seen) = service(Vec::new());
+        let (service, seen, _sub) = service(Vec::new());
         let now = Instant::now();
         service.emit_snapshot(Vec::new(), now);
         service.emit_snapshot(vec![device("buds", false, None)], now);
@@ -452,11 +482,10 @@ mod tests {
     #[test]
     #[ignore]
     fn windows_watcher_initializes() {
-        use windows::core::HSTRING;
         use windows::Devices::Enumeration::DeviceInformation;
+        use windows::core::HSTRING;
 
-        const AQS: &str = "(System.Devices.Aep.ProtocolId:=\"{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}\" OR System.Devices.Aep.ProtocolId:=\"{bb7bb05e-5972-42b5-94fc-76eaa7084d49}\")";
-        const AQS_PAIRED: &str = "(System.Devices.Aep.ProtocolId:=\"{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}\" OR System.Devices.Aep.ProtocolId:=\"{bb7bb05e-5972-42b5-94fc-76eaa7084d49}\") AND System.Devices.Aep.IsPaired:System.StructuredQueryType.Boolean#True";
+        const AQS: &str = "(System.Devices.Aep.ProtocolId:=\"{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}\" OR System.Devices.Aep.ProtocolId:=\"{bb7bb05e-5972-42b5-94fc-76eaa7084d49}\") AND System.Devices.Aep.IsPaired:System.StructuredQueryType.Boolean#True";
 
         unsafe {
             let _ = windows::Win32::System::Com::CoInitializeEx(
@@ -464,24 +493,23 @@ mod tests {
                 windows::Win32::System::Com::COINIT_MULTITHREADED,
             );
         }
-        // The full backend property list must be accepted by the watcher.
+        // The full backend property list must be accepted by the watcher with
+        // the AssociationEndpoint kind, exactly as the backend constructs it.
         let props = crate::capabilities::winbluetooth::property_list(&[
+            "System.Devices.Aep.IsConnected",
             "System.Devices.Aep.IsPresent",
             "System.Devices.Aep.IsPaired",
             "System.Devices.Aep.ProtocolId",
         ]);
-        let result = DeviceInformation::CreateWatcherAqsFilterAndAdditionalProperties(
+        let result = DeviceInformation::CreateWatcherWithKindAqsFilterAndAdditionalProperties(
             &HSTRING::from(AQS),
             &props,
+            windows::Devices::Enumeration::DeviceInformationKind::AssociationEndpoint,
         );
-        assert!(result.is_ok(), "watcher with real properties must initialize");
-
-        // The paired-only AQS must also parse.
-        let paired = DeviceInformation::CreateWatcherAqsFilterAndAdditionalProperties(
-            &HSTRING::from(AQS_PAIRED),
-            &props,
+        assert!(
+            result.is_ok(),
+            "watcher with real properties must initialize"
         );
-        assert!(paired.is_ok(), "paired-only AQS must initialize");
     }
 
     #[test]
@@ -490,8 +518,8 @@ mod tests {
         let seen = Arc::new(parking_lot::Mutex::new(0usize));
         let first = seen.clone();
         let second = seen.clone();
-        service.subscribe(move |_| *first.lock() += 1);
-        service.subscribe(move |_| *second.lock() += 1);
+        let _sub_a = service.subscribe(move |_| *first.lock() += 1);
+        let _sub_b = service.subscribe(move |_| *second.lock() += 1);
         let now = Instant::now();
         service.emit_snapshot(Vec::new(), now);
         service.emit_snapshot(vec![device("buds", true, None)], now);

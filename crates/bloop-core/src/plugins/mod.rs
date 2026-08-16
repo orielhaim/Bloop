@@ -10,27 +10,26 @@ pub use permissions::*;
 pub use watches::*;
 
 use crate::activity::ActivityService;
-use crate::capabilities::{
-    AudioService, DeviceService, HttpService, MediaEvent, MediaService,
-};
+use crate::capabilities::{AudioService, DeviceService, HttpService, MediaEvent, MediaService};
 use crate::error::{EngineError, EngineResult};
-use crate::events::{EngineEvent, EventBus};
+use crate::events::{EngineEvent, EventBus, Subscription};
 use crate::settings::SettingsService;
 use crate::theme::{ThemeDocument, ThemeService};
 use parking_lot::Mutex;
-pub use runtime::inspect_component;
+use runtime::bloop::abi::capability::CapabilityEvent;
 use runtime::{
-    PluginCommand, event_matches, spawn_activity_plugin, start_epoch_thread, wasm_engine,
+    PluginCommand, audio_capability_event, devices_capability_event, event_matches,
+    media_capability_event, spawn_activity_plugin, start_epoch_thread, wasm_engine,
 };
+pub use runtime::{WorkerHandle, inspect_component};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::Sender;
 
 pub struct PluginManager {
     records: Mutex<HashMap<String, PluginRecord>>,
-    workers: Arc<Mutex<HashMap<String, Sender<PluginCommand>>>>,
-    storage: Arc<Mutex<NamespacedStore>>,
+    workers: Arc<Mutex<HashMap<String, WorkerHandle>>>,
+    storage: Arc<PluginStore>,
     http: Arc<HttpService>,
     media: Arc<MediaService>,
     audio: Arc<AudioService>,
@@ -42,6 +41,9 @@ pub struct PluginManager {
     events: Arc<EventBus>,
     wasm: wasmtime::Engine,
     persist_path: Option<PathBuf>,
+    _media_sub: Subscription,
+    _audio_sub: Subscription,
+    _devices_sub: Subscription,
 }
 
 impl PluginManager {
@@ -58,42 +60,39 @@ impl PluginManager {
     ) -> EngineResult<Self> {
         let wasm = wasm_engine()?;
         start_epoch_thread(wasm.clone());
-        let workers: Arc<Mutex<HashMap<String, Sender<PluginCommand>>>> =
+        let workers: Arc<Mutex<HashMap<String, WorkerHandle>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let watches = Arc::new(WatchRegistry::default());
         let workers_for_media = workers.clone();
         let watches_for_media = watches.clone();
-        media.subscribe(move |event| {
+        let media_sub = media.subscribe(move |event| {
             dispatch_media_event(&workers_for_media, &watches_for_media, event);
         });
         let workers_for_audio = workers.clone();
         let watches_for_audio = watches.clone();
-        audio.subscribe(move |event| {
-            dispatch_event(
+        let audio_sub = audio.subscribe(move |event| {
+            dispatch_capability_event(
                 &workers_for_audio,
                 &watches_for_audio,
-                "audio",
-                serde_json::to_string(&event).unwrap_or_else(|_| "{}".into()),
+                Capability::Audio,
+                audio_capability_event(event),
             );
         });
         let workers_for_devices = workers.clone();
         let watches_for_devices = watches.clone();
-        devices.subscribe(move |event| {
-            dispatch_event(
+        let devices_sub = devices.subscribe(move |event| {
+            dispatch_capability_event(
                 &workers_for_devices,
                 &watches_for_devices,
-                "devices",
-                serde_json::to_string(&event).unwrap_or_else(|_| "{}".into()),
+                Capability::Devices,
+                devices_capability_event(event),
             );
         });
-        let storage = persist_path
-            .as_ref()
-            .map(|path| NamespacedStore::load(path))
-            .unwrap_or_default();
+        let storage = Arc::new(PluginStore::open(persist_path.as_deref())?);
         Ok(Self {
             records: Mutex::new(HashMap::new()),
             workers,
-            storage: Arc::new(Mutex::new(storage)),
+            storage,
             http,
             media,
             audio,
@@ -105,10 +104,13 @@ impl PluginManager {
             events,
             wasm,
             persist_path,
+            _media_sub: media_sub,
+            _audio_sub: audio_sub,
+            _devices_sub: devices_sub,
         })
     }
 
-    pub fn storage(&self) -> Arc<Mutex<NamespacedStore>> {
+    pub fn storage(&self) -> Arc<PluginStore> {
         self.storage.clone()
     }
 
@@ -129,6 +131,12 @@ impl PluginManager {
         force_enable: bool,
     ) -> EngineResult<PluginRecord> {
         let (manifest, root, component_path, theme_path) = load_package(&root)?;
+        if let Some(existing) = self.records.lock().get(&manifest.id).cloned()
+            && existing.component_path.is_some()
+            && component_path.is_none()
+        {
+            return Ok(existing);
+        }
         let mut inspect_error = None;
         if manifest.provides.activity && component_path.is_none() {
             inspect_error = Some("activity plugin is missing component.wasm".into());
@@ -189,17 +197,34 @@ impl PluginManager {
     }
 
     pub fn enable(&self, id: &str) -> EngineResult<PluginRecord> {
-        let mut records = self.records.lock();
-        let record = records
-            .get_mut(id)
+        let mut record = self
+            .get(id)
             .ok_or_else(|| EngineError::Plugin("plugin not found".into()))?;
-        self.enable_record(record)?;
-        Ok(record.clone())
+        if let Err(error) = self.enable_record(&mut record) {
+            record.enabled = false;
+            record.state = PluginLifecycle::Failed;
+            record.error = Some(error.to_string());
+            self.records
+                .lock()
+                .insert(record.id.clone(), record.clone());
+            self.events.emit(EngineEvent::PluginLoaded {
+                plugin: record.clone(),
+            });
+            return Err(error);
+        }
+        self.records
+            .lock()
+            .insert(record.id.clone(), record.clone());
+        self.events.emit(EngineEvent::PluginLoaded {
+            plugin: record.clone(),
+        });
+        Ok(record)
     }
 
     pub fn disable(&self, id: &str) -> EngineResult<PluginRecord> {
+        self.activities.dismiss_plugin(id);
         if let Some(worker) = self.workers.lock().remove(id) {
-            let _ = worker.send(PluginCommand::Shutdown);
+            let _ = worker.control.send(PluginCommand::Shutdown);
         }
         let mut records = self.records.lock();
         let record = records
@@ -239,8 +264,10 @@ impl PluginManager {
         let record = self
             .get(id)
             .ok_or_else(|| EngineError::Plugin("plugin not found".into()))?;
+        let enable = record.enabled;
+        let root = record.root.clone();
         self.disable(id)?;
-        self.install_from_path(record.root, true)
+        self.install_from_path(root, enable)
     }
 
     pub fn dispatch_action(
@@ -256,6 +283,7 @@ impl PluginManager {
             .cloned()
             .ok_or_else(|| EngineError::Plugin("plugin is not running".into()))?;
         worker
+            .control
             .send(PluginCommand::Action {
                 id: action_id.into(),
                 payload: payload.into(),
@@ -265,16 +293,26 @@ impl PluginManager {
 
     pub fn notify_settings(&self, plugin_id: &str) {
         if let Some(worker) = self.workers.lock().get(plugin_id) {
-            let _ = worker.send(PluginCommand::SettingsChanged);
+            let _ = worker.control.send(PluginCommand::SettingsChanged);
         }
     }
 
     fn enable_record(&self, record: &mut PluginRecord) -> EngineResult<()> {
+        self.refresh_component(record);
         if record.manifest.provides.activity {
-            if let Some(existing) = self.workers.lock().remove(&record.id) {
-                let _ = existing.send(PluginCommand::Shutdown);
+            if record
+                .component_path
+                .as_ref()
+                .is_none_or(|path| !path.is_file())
+            {
+                return Err(EngineError::Configuration(
+                    "activity plugin is missing component.wasm".into(),
+                ));
             }
-            let tx = spawn_activity_plugin(
+            if let Some(existing) = self.workers.lock().remove(&record.id) {
+                let _ = existing.control.send(PluginCommand::Shutdown);
+            }
+            let handle = spawn_activity_plugin(
                 self.wasm.clone(),
                 record,
                 self.http.clone(),
@@ -288,9 +326,11 @@ impl PluginManager {
                 self.events.clone(),
                 self.persist_path.clone(),
             )?;
-            tx.send(PluginCommand::Initialize)
+            handle
+                .control
+                .send(PluginCommand::Initialize)
                 .map_err(|_| EngineError::Runtime("failed to initialize plugin".into()))?;
-            self.workers.lock().insert(record.id.clone(), tx);
+            self.workers.lock().insert(record.id.clone(), handle);
         }
         if let Some(theme) = theme_from_record(record) {
             self.themes.register(theme);
@@ -303,6 +343,17 @@ impl PluginManager {
         });
         Ok(())
     }
+
+    fn refresh_component(&self, record: &mut PluginRecord) {
+        let entry = record.manifest.entry.as_deref().unwrap_or("component.wasm");
+        if record
+            .component_path
+            .as_ref()
+            .is_none_or(|path| !path.is_file())
+        {
+            record.component_path = resolve_component(&record.root, entry);
+        }
+    }
 }
 
 fn theme_from_record(record: &PluginRecord) -> Option<ThemeDocument> {
@@ -312,37 +363,32 @@ fn theme_from_record(record: &PluginRecord) -> Option<ThemeDocument> {
 }
 
 fn dispatch_media_event(
-    workers: &Arc<Mutex<HashMap<String, Sender<PluginCommand>>>>,
+    workers: &Arc<Mutex<HashMap<String, WorkerHandle>>>,
     watches: &Arc<WatchRegistry>,
-    event: MediaEvent,
+    event: &MediaEvent,
 ) {
-    let payload = serde_json::to_string(&event).unwrap_or_else(|_| "{}".into());
+    let capability_event = media_capability_event(event);
     let workers = workers.lock();
-    for (plugin_id, query) in watches.subscribers("media") {
-        if event_matches(&event, &query)
+    for (plugin_id, query) in watches.subscribers(Capability::Media) {
+        if event_matches(event, &query)
             && let Some(worker) = workers.get(&plugin_id)
         {
-            let _ = worker.send(PluginCommand::Event {
-                topic: "media".into(),
-                payload: payload.clone(),
-            });
+            worker.post_event(capability_event.clone());
         }
     }
 }
 
-fn dispatch_event(
-    workers: &Arc<Mutex<HashMap<String, Sender<PluginCommand>>>>,
+fn dispatch_capability_event(
+    workers: &Arc<Mutex<HashMap<String, WorkerHandle>>>,
     watches: &Arc<WatchRegistry>,
-    topic: &str,
-    payload: String,
+    capability: Capability,
+    event: CapabilityEvent,
 ) {
+    let subscribers = watches.subscribers(capability);
     let workers = workers.lock();
-    for (plugin_id, _filter) in watches.subscribers(topic) {
+    for (plugin_id, _filter) in subscribers {
         if let Some(worker) = workers.get(&plugin_id) {
-            let _ = worker.send(PluginCommand::Event {
-                topic: topic.into(),
-                payload: payload.clone(),
-            });
+            worker.post_event(event.clone());
         }
     }
 }

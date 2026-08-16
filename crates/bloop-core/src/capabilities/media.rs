@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{EngineError, EngineResult};
+use crate::events::{Signal, Subscription};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -83,6 +84,11 @@ impl MediaSession {
             && self.controls == other.controls
             && self.has_artwork == other.has_artwork
     }
+
+    /// True when playback jumped rather than advancing continuously.
+    pub fn position_jumped(&self, other: &Self) -> bool {
+        self.position_ms.abs_diff(other.position_ms) >= 1_500
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,7 +161,7 @@ impl MediaBackend for NullMedia {
 
 pub struct MediaService {
     backend: std::sync::Arc<dyn MediaBackend>,
-    listeners: parking_lot::Mutex<Vec<std::sync::Arc<dyn Fn(MediaEvent) + Send + Sync>>>,
+    events: Signal<MediaEvent>,
 }
 
 impl MediaService {
@@ -176,18 +182,20 @@ impl MediaService {
     pub fn new(backend: std::sync::Arc<dyn MediaBackend>) -> Self {
         Self {
             backend,
-            listeners: parking_lot::Mutex::new(Vec::new()),
+            events: Signal::new(),
         }
     }
 
-    pub fn subscribe(&self, listener: impl Fn(MediaEvent) + Send + Sync + 'static) {
-        self.listeners.lock().push(std::sync::Arc::new(listener));
+    /// Subscribe to media events; drop the subscription to unsubscribe.
+    pub fn subscribe(
+        &self,
+        listener: impl Fn(&MediaEvent) + Send + Sync + 'static,
+    ) -> Subscription {
+        self.events.subscribe(listener)
     }
 
     pub fn emit(&self, event: MediaEvent) {
-        for listener in self.listeners.lock().iter() {
-            listener(event.clone());
-        }
+        self.events.emit(&event);
     }
 
     pub fn sessions(&self) -> Vec<MediaSession> {
@@ -300,6 +308,21 @@ mod tests {
     }
 
     #[test]
+    fn placeholder_titles_are_detected() {
+        assert!(is_placeholder_title("Spotify Premium", "", ""));
+        assert!(is_placeholder_title(
+            "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify",
+            "",
+            ""
+        ));
+        assert!(!is_placeholder_title(
+            "Midnight City",
+            "Spotify.exe",
+            "Spotify"
+        ));
+    }
+
+    #[test]
     fn query_matches_store_aumid() {
         let session = MediaSession {
             id: "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify".into(),
@@ -324,6 +347,31 @@ mod tests {
 
 pub(crate) fn session_ids_match(left: &str, right: &str) -> bool {
     left == right || normalize_app_token(left) == normalize_app_token(right)
+}
+
+/// GSMTC often reports the app's marketing name (or the raw AUMID) as the track
+/// title until real media properties arrive. Those placeholders must not stick.
+pub(crate) fn is_placeholder_title(title: &str, app_id: &str, app_name: &str) -> bool {
+    let title = title.trim();
+    if title.is_empty() {
+        return true;
+    }
+    let lower = title.to_ascii_lowercase();
+    if lower == "spotify premium"
+        || lower == "spotify"
+        || lower == "now playing"
+        || lower == "not playing"
+    {
+        return true;
+    }
+    if !app_name.is_empty() && title.eq_ignore_ascii_case(app_name) {
+        return true;
+    }
+    looks_like_aumid(title) || (!app_id.is_empty() && title.eq_ignore_ascii_case(app_id))
+}
+
+fn looks_like_aumid(value: &str) -> bool {
+    value.contains('!') || (value.contains('_') && value.len() > 24)
 }
 
 fn normalize_app_token(value: &str) -> String {

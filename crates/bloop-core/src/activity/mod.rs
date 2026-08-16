@@ -55,6 +55,12 @@ impl ActivityService {
         view
     }
 
+    pub fn dismiss_plugin(&self, plugin_id: &str) -> ScheduledView {
+        let view = self.scheduler.lock().dismiss_plugin(plugin_id);
+        self.events.emit(EngineEvent::PresenceChanged);
+        view
+    }
+
     pub fn open_home(&self) -> ScheduledView {
         let view = self.scheduler.lock().open_home();
         self.events.emit(EngineEvent::PresenceChanged);
@@ -99,7 +105,7 @@ impl ActivityService {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct IslandState {
     pub presence: Presence,

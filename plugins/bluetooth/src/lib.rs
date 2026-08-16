@@ -4,9 +4,10 @@ wit_bindgen::generate!({
 });
 
 use crate::exports::bloop::abi::activity::Guest;
+use bloop::abi::capability::CapabilityEvent;
+use bloop::abi::devices::{Device, DeviceEvent, DeviceKind};
 use bloop_sdk as ui;
 use bloop_sdk::Snapshot;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -20,48 +21,6 @@ struct Settings {
     show_disconnect: bool,
     show_battery: bool,
     duration_ms: u32,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            show_connect: true,
-            show_disconnect: true,
-            show_battery: true,
-            duration_ms: 1800,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Device {
-    id: String,
-    name: String,
-    kind: DeviceKind,
-    connected: bool,
-    paired: bool,
-    battery: Option<u8>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-enum DeviceKind {
-    Headphones,
-    Speaker,
-    Keyboard,
-    Mouse,
-    Controller,
-    Phone,
-    Other,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-enum DeviceEvent {
-    Connected { device: Device },
-    Disconnected { device: Device },
-    Updated { device: Device },
 }
 
 static SETTINGS: Mutex<Settings> = Mutex::new(Settings {
@@ -88,7 +47,7 @@ impl Guest for BluetoothPlugin {
     fn initialize() -> Result<(), String> {
         *SETTINGS.lock().unwrap_or_else(|e| e.into_inner()) = load_settings();
         let _ = bloop::abi::host::device_list();
-        bloop::abi::host::watch("devices", "").map_err(err)?;
+        bloop::abi::host::watch(bloop::abi::capability::Capability::Devices, "").map_err(err)?;
         Ok(())
     }
 
@@ -100,17 +59,14 @@ impl Guest for BluetoothPlugin {
         Ok(())
     }
 
-    fn on_event(topic: String, payload_json: String) -> Result<(), String> {
-        if topic != "devices" {
-            return Ok(());
-        }
-        let Ok(event) = serde_json::from_str::<DeviceEvent>(&payload_json) else {
+    fn on_event(event: CapabilityEvent) -> Result<(), String> {
+        let CapabilityEvent::Devices(device_event) = event else {
             return Ok(());
         };
         let settings = *SETTINGS.lock().unwrap_or_else(|e| e.into_inner());
         let now = bloop::abi::host::now_ms();
-        match event {
-            DeviceEvent::Connected { device } => {
+        match device_event {
+            DeviceEvent::Connected(device) => {
                 if settings.show_connect {
                     announced()
                         .lock()
@@ -119,7 +75,7 @@ impl Guest for BluetoothPlugin {
                     publish_connected(&device, &settings);
                 }
             }
-            DeviceEvent::Disconnected { device } => {
+            DeviceEvent::Disconnected(device) => {
                 announced()
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
@@ -128,7 +84,7 @@ impl Guest for BluetoothPlugin {
                     publish_disconnected(&device, &settings);
                 }
             }
-            DeviceEvent::Updated { device } => {
+            DeviceEvent::Updated(device) => {
                 // Only surface battery updates for devices announced recently;
                 // baseline reads that resolve after startup stay silent.
                 let recent = announced()
@@ -136,11 +92,7 @@ impl Guest for BluetoothPlugin {
                     .unwrap_or_else(|e| e.into_inner())
                     .get(&device.id)
                     .is_some_and(|at| now.saturating_sub(*at) <= ANNOUNCE_WINDOW_MS);
-                if settings.show_battery
-                    && device.connected
-                    && device.battery.is_some()
-                    && recent
-                {
+                if settings.show_battery && device.connected && device.battery.is_some() && recent {
                     publish_connected(&device, &settings);
                 }
             }
@@ -154,7 +106,7 @@ impl Guest for BluetoothPlugin {
     }
 
     fn shutdown() {
-        bloop::abi::host::unwatch("devices");
+        bloop::abi::host::unwatch(bloop::abi::capability::Capability::Devices);
         let _ = bloop::abi::host::dismiss(ACTIVITY_ID);
     }
 }

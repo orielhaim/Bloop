@@ -58,11 +58,35 @@ const BATTERY_LEVEL: windows::core::GUID =
 #[cfg(windows)]
 const PROP_NAME: &str = "System.Devices.Aep.Name";
 #[cfg(windows)]
+const PROP_CONNECTED: &str = "System.Devices.Aep.IsConnected";
+#[cfg(windows)]
 const PROP_PRESENT: &str = "System.Devices.Aep.IsPresent";
 #[cfg(windows)]
 const PROP_PAIRED: &str = "System.Devices.Aep.IsPaired";
 #[cfg(windows)]
 const PROP_PROTOCOL: &str = "System.Devices.Aep.ProtocolId";
+
+/// Bluetooth transport of an association endpoint, derived from its AEP
+/// protocol id rather than from opaque device id formatting.
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Transport {
+    #[default]
+    Classic,
+    Le,
+}
+
+#[cfg(windows)]
+fn transport_from_protocol(
+    props: &windows_collections::IMapView<windows::core::HSTRING, windows::core::IInspectable>,
+) -> Option<Transport> {
+    let protocol = prop_guid(props, PROP_PROTOCOL)?;
+    if protocol == LE_PROTOCOL {
+        Some(Transport::Le)
+    } else {
+        Some(Transport::Classic)
+    }
+}
 
 #[cfg(windows)]
 impl WinBluetoothBackend {
@@ -101,12 +125,16 @@ struct Entry {
     id: String,
     name: String,
     kind: DeviceKind,
+    transport: Transport,
     present: bool,
     paired: bool,
     battery: Option<u8>,
     probing: bool,
-    /// Authoritative connection state once a ConnectionStatus monitor is attached.
+    /// Authoritative connection state (from `Aep.IsConnected` or a monitor).
     connected: bool,
+    /// Whether `Aep.IsConnected` has been observed for this endpoint.
+    has_connected: bool,
+    /// Whether a direct ConnectionStatusChanged monitor is attached.
     monitored: bool,
 }
 
@@ -119,7 +147,10 @@ impl Registry {
                 id: entry.id.clone(),
                 name: entry.name.clone(),
                 kind: entry.kind,
-                connected: if entry.monitored {
+                // A direct monitor or the AEP IsConnected flag is authoritative;
+                // presence is only a fallback for endpoints Windows reports
+                // without connection state.
+                connected: if entry.monitored || entry.has_connected {
                     entry.connected
                 } else {
                     entry.present && entry.paired
@@ -164,9 +195,14 @@ fn run_devices_thread(
     let started = Instant::now();
     let monitors: Arc<Mutex<HashMap<String, ConnectionMonitor>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    if let Err(error) = setup_watcher(&on_snapshot, &registry, &monitors) {
-        tracing::error!(%error, "failed to initialize bluetooth watcher");
-    }
+    let watcher = match setup_watcher(&on_snapshot, &registry, &monitors) {
+        Ok(watcher) => watcher,
+        Err(error) => {
+            tracing::error!(%error, "failed to initialize bluetooth watcher");
+            return;
+        }
+    };
+    let _watcher_guard = WatcherGuard { watcher };
     pump_messages(rx, &on_snapshot, &registry, started);
     unsafe {
         CoUninitialize();
@@ -178,17 +214,19 @@ fn setup_watcher(
     on_snapshot: &Arc<dyn Fn(Vec<Device>) + Send + Sync>,
     registry: &Arc<Mutex<Registry>>,
     monitors: &Arc<Mutex<HashMap<String, ConnectionMonitor>>>,
-) -> Result<(), String> {
-    use windows::Devices::Enumeration::DeviceInformation;
+) -> Result<windows::Devices::Enumeration::DeviceWatcher, String> {
+    use windows::Devices::Enumeration::{DeviceInformation, DeviceInformationKind};
     use windows::Foundation::TypedEventHandler;
 
     // The friendly name is always available via DeviceInformation::Name, so it
     // is intentionally not requested here (it cannot be resolved as an AEP
-    // additional property key on all systems).
-    let props = property_list(&[PROP_PRESENT, PROP_PAIRED, PROP_PROTOCOL]);
-    let watcher = DeviceInformation::CreateWatcherAqsFilterAndAdditionalProperties(
+    // additional property key on all systems). IsConnected is the authoritative
+    // connection signal for association endpoints.
+    let props = property_list(&[PROP_CONNECTED, PROP_PRESENT, PROP_PAIRED, PROP_PROTOCOL]);
+    let watcher = DeviceInformation::CreateWatcherWithKindAqsFilterAndAdditionalProperties(
         &windows::core::HSTRING::from(BT_AQS),
         &props,
+        DeviceInformationKind::AssociationEndpoint,
     )
     .map_err(|error| error.to_string())?;
 
@@ -232,8 +270,33 @@ fn setup_watcher(
         Ok(())
     }));
 
+    // Diagnostics: if Windows stops the watcher on its own, surface the status.
+    let _ = watcher.Stopped(&TypedEventHandler::new(
+        move |sender: windows::core::Ref<windows::Devices::Enumeration::DeviceWatcher>,
+              _: windows::core::Ref<windows::core::IInspectable>| {
+            let status = sender.as_ref().and_then(|watcher| watcher.Status().ok());
+            tracing::warn!(?status, "bluetooth watcher stopped");
+            Ok(())
+        },
+    ));
+
     watcher.Start().map_err(|error| error.to_string())?;
-    Ok(())
+    Ok(watcher)
+}
+
+/// Keeps the DeviceWatcher alive for the lifetime of the backend. WinRT objects
+/// stop delivering events once their last reference is dropped, so the watcher
+/// is held explicitly rather than relying on the event handlers.
+#[cfg(windows)]
+struct WatcherGuard {
+    watcher: windows::Devices::Enumeration::DeviceWatcher,
+}
+
+#[cfg(windows)]
+impl Drop for WatcherGuard {
+    fn drop(&mut self) {
+        let _ = self.watcher.Stop();
+    }
 }
 
 #[cfg(windows)]
@@ -255,28 +318,30 @@ fn handle_added(
         Ok(props) => props,
         Err(_) => return,
     };
-    let is_le = prop_guid(&props, PROP_PROTOCOL).is_some_and(|guid| guid == LE_PROTOCOL);
+    let transport = transport_from_protocol(&props).unwrap_or(Transport::Classic);
     let kind = classify_kind(&name);
 
     let probe = {
         let mut reg = registry.lock();
         let existing = reg.entries.get(&id).cloned();
-        let entry = reg
-            .entries
-            .entry(id.clone())
-            .or_insert_with(|| Entry {
-                id: id.clone(),
-                ..Entry::default()
-            });
+        let entry = reg.entries.entry(id.clone()).or_insert_with(|| Entry {
+            id: id.clone(),
+            ..Entry::default()
+        });
         // The query only returns paired devices, so a missing IsPaired property
         // preserves the previous state and defaults to paired.
         entry.name = name;
         entry.kind = kind;
+        entry.transport = transport;
         entry.paired = prop_bool(&props, PROP_PAIRED)
             .unwrap_or_else(|| existing.as_ref().map(|e| e.paired).unwrap_or(true));
         entry.present = prop_bool(&props, PROP_PRESENT)
             .unwrap_or_else(|| existing.as_ref().map(|e| e.present).unwrap_or(true));
-        let should_probe = is_le && !entry.probing && entry.battery.is_none();
+        if let Some(connected) = prop_bool(&props, PROP_CONNECTED) {
+            entry.connected = connected;
+            entry.has_connected = true;
+        }
+        let should_probe = transport == Transport::Le && !entry.probing && entry.battery.is_none();
         if should_probe {
             entry.probing = true;
         }
@@ -285,7 +350,7 @@ fn handle_added(
     if probe {
         spawn_battery_probe(id.clone(), registry.clone(), on_snapshot.clone());
     }
-    attach_connection_monitor(&id, registry, on_snapshot, monitors);
+    attach_connection_monitor(&id, transport, registry, on_snapshot, monitors);
     emit_flush(registry, on_snapshot);
 }
 
@@ -306,13 +371,10 @@ fn handle_updated(
     let became_present = {
         let mut reg = registry.lock();
         let existing = reg.entries.get(&id).cloned();
-        let entry = reg
-            .entries
-            .entry(id.clone())
-            .or_insert_with(|| Entry {
-                id: id.clone(),
-                ..Entry::default()
-            });
+        let entry = reg.entries.entry(id.clone()).or_insert_with(|| Entry {
+            id: id.clone(),
+            ..Entry::default()
+        });
         if let Some(name) = prop_string(&props, PROP_NAME) {
             entry.name = name;
             entry.kind = classify_kind(&entry.name);
@@ -325,10 +387,33 @@ fn handle_updated(
         if let Some(present) = present {
             entry.present = present;
         }
+        // Aep.IsConnected is the authoritative connection signal.
+        if let Some(connected) = prop_bool(&props, PROP_CONNECTED) {
+            entry.connected = connected;
+            entry.has_connected = true;
+        }
+        if let Some(protocol) = prop_guid(&props, PROP_PROTOCOL) {
+            entry.transport = if protocol == LE_PROTOCOL {
+                Transport::Le
+            } else {
+                Transport::Classic
+            };
+        }
         became_present
     };
     if became_present {
-        attach_connection_monitor(&id, registry, on_snapshot, monitors);
+        attach_connection_monitor(
+            &id,
+            registry
+                .lock()
+                .entries
+                .get(&id)
+                .map(|e| e.transport)
+                .unwrap_or(Transport::Classic),
+            registry,
+            on_snapshot,
+            monitors,
+        );
     }
     emit_flush(registry, on_snapshot);
 }
@@ -349,26 +434,31 @@ fn handle_removed(
     emit_flush(registry, on_snapshot);
 }
 
-/// Attach an authoritative connection monitor for a paired device. The monitor
-/// subscribes to ConnectionStatusChanged and drives the connected flag. When the
-/// handle cannot be opened (unpackaged access is denied on some systems) the
-/// device keeps using the AEP presence heuristic instead.
+/// Attach an optional direct connection monitor for a paired device. This is a
+/// faster/more direct source than the AEP watcher (and enriches it), but it is
+/// not a requirement for detection: `Aep.IsConnected` remains the authoritative
+/// signal, with the presence heuristic as a final fallback. When the handle
+/// cannot be opened (unpackaged access is denied on some systems) the device
+/// simply keeps using the AEP properties.
 #[cfg(windows)]
 fn attach_connection_monitor(
     id: &str,
+    transport: Transport,
     registry: &Arc<Mutex<Registry>>,
     on_snapshot: &Arc<dyn Fn(Vec<Device>) + Send + Sync>,
     monitors: &Arc<Mutex<HashMap<String, ConnectionMonitor>>>,
 ) {
-    use windows::core::HSTRING;
-    use windows::Devices::Bluetooth::{BluetoothConnectionStatus, BluetoothDevice, BluetoothLEDevice};
+    use windows::Devices::Bluetooth::{
+        BluetoothConnectionStatus, BluetoothDevice, BluetoothLEDevice,
+    };
     use windows::Foundation::TypedEventHandler;
+    use windows::core::HSTRING;
 
     if monitors.lock().contains_key(id) {
         return;
     }
     let hstring = HSTRING::from(id);
-    if id.starts_with("BluetoothLE#") {
+    if transport == Transport::Le {
         let Ok(device) = BluetoothLEDevice::FromIdAsync(&hstring).and_then(|op| op.join()) else {
             return;
         };
@@ -457,8 +547,10 @@ struct ClassicMonitor {
     #[allow(dead_code)]
     _device: windows::Devices::Bluetooth::BluetoothDevice,
     #[allow(dead_code)]
-    _handler:
-        windows::Foundation::TypedEventHandler<windows::Devices::Bluetooth::BluetoothDevice, windows::core::IInspectable>,
+    _handler: windows::Foundation::TypedEventHandler<
+        windows::Devices::Bluetooth::BluetoothDevice,
+        windows::core::IInspectable,
+    >,
     #[allow(dead_code)]
     _token: i64,
 }
@@ -468,8 +560,10 @@ struct BleMonitor {
     #[allow(dead_code)]
     _device: windows::Devices::Bluetooth::BluetoothLEDevice,
     #[allow(dead_code)]
-    _handler:
-        windows::Foundation::TypedEventHandler<windows::Devices::Bluetooth::BluetoothLEDevice, windows::core::IInspectable>,
+    _handler: windows::Foundation::TypedEventHandler<
+        windows::Devices::Bluetooth::BluetoothLEDevice,
+        windows::core::IInspectable,
+    >,
     #[allow(dead_code)]
     _token: i64,
 }
@@ -509,7 +603,9 @@ fn spawn_battery_probe(
         .spawn(move || {
             use windows::Devices::Bluetooth::BluetoothLEDevice;
             use windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus;
-            use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
+            use windows::Win32::System::Com::{
+                COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize,
+            };
             unsafe {
                 let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             }
@@ -586,9 +682,7 @@ fn prop_bool(
 ) -> Option<bool> {
     use windows::core::Interface;
     let value = props.Lookup(&windows::core::HSTRING::from(key)).ok()?;
-    let reference = value
-        .cast::<windows::Foundation::IReference<bool>>()
-        .ok()?;
+    let reference = value.cast::<windows::Foundation::IReference<bool>>().ok()?;
     reference.Value().ok()
 }
 
@@ -609,7 +703,14 @@ fn prop_guid(
 fn classify_kind(name: &str) -> DeviceKind {
     let name = name.to_ascii_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|needle| name.contains(needle));
-    if has(&["headphone", "headset", "earbud", "earphone", " buds", "buds"]) {
+    if has(&[
+        "headphone",
+        "headset",
+        "earbud",
+        "earphone",
+        " buds",
+        "buds",
+    ]) {
         DeviceKind::Headphones
     } else if has(&["speaker", "soundbar", "sound bar"]) {
         DeviceKind::Speaker
@@ -728,7 +829,11 @@ impl windows_collections::IVector_Impl<windows::core::HSTRING> for StringList_Im
         }
     }
 
-    fn SetAt(&self, index: u32, value: windows::core::Ref<windows::core::HSTRING>) -> windows::core::Result<()> {
+    fn SetAt(
+        &self,
+        index: u32,
+        value: windows::core::Ref<windows::core::HSTRING>,
+    ) -> windows::core::Result<()> {
         let mut items = self.items.lock();
         let index = index as usize;
         if index >= items.len() {
@@ -738,7 +843,11 @@ impl windows_collections::IVector_Impl<windows::core::HSTRING> for StringList_Im
         Ok(())
     }
 
-    fn InsertAt(&self, index: u32, value: windows::core::Ref<windows::core::HSTRING>) -> windows::core::Result<()> {
+    fn InsertAt(
+        &self,
+        index: u32,
+        value: windows::core::Ref<windows::core::HSTRING>,
+    ) -> windows::core::Result<()> {
         let mut items = self.items.lock();
         let index = (index as usize).min(items.len());
         items.insert(index, (*value).clone());
@@ -754,7 +863,10 @@ impl windows_collections::IVector_Impl<windows::core::HSTRING> for StringList_Im
         Ok(())
     }
 
-    fn Append(&self, value: windows::core::Ref<windows::core::HSTRING>) -> windows::core::Result<()> {
+    fn Append(
+        &self,
+        value: windows::core::Ref<windows::core::HSTRING>,
+    ) -> windows::core::Result<()> {
         self.items.lock().push((*value).clone());
         Ok(())
     }
@@ -824,14 +936,13 @@ impl windows_collections::IIterator_Impl<windows::core::HSTRING> for StringItera
     }
 
     fn HasCurrent(&self) -> windows::core::Result<bool> {
-        Ok(self.current.load(std::sync::atomic::Ordering::Relaxed)
-            < self.owner.items.lock().len())
+        Ok(self.current.load(std::sync::atomic::Ordering::Relaxed) < self.owner.items.lock().len())
     }
 
     fn MoveNext(&self) -> windows::core::Result<bool> {
-        self.current.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Ok(self.current.load(std::sync::atomic::Ordering::Relaxed)
-            < self.owner.items.lock().len())
+        self.current
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(self.current.load(std::sync::atomic::Ordering::Relaxed) < self.owner.items.lock().len())
     }
 
     fn GetMany(&self, items: &mut [windows::core::HSTRING]) -> windows::core::Result<u32> {
@@ -841,7 +952,8 @@ impl windows_collections::IIterator_Impl<windows::core::HSTRING> for StringItera
         for (offset, slot) in items.iter_mut().enumerate().take(count) {
             *slot = all[current + offset].clone();
         }
-        self.current.fetch_add(count, std::sync::atomic::Ordering::Relaxed);
+        self.current
+            .fetch_add(count, std::sync::atomic::Ordering::Relaxed);
         Ok(count as u32)
     }
 }

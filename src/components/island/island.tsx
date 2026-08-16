@@ -9,7 +9,6 @@ import { isSortable } from "@dnd-kit/react/sortable";
 import { motion } from "motion/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FiCheck, FiEdit2 } from "react-icons/fi";
-import { FaceSwap } from "./face-swap";
 import {
   ActivityIcon,
   ActivityTray,
@@ -32,6 +31,7 @@ import type {
   IdleProvider,
   PreferredSize,
 } from "@/lib/engine/types";
+import { FaceSwap } from "./face-swap";
 import {
   expandedIsland,
   islandWindow,
@@ -74,9 +74,7 @@ function faceWidthBounds(
       }
       // Occupied faces get a comfortable floor; idle/empty surfaces size to
       // their actual content.
-      return occupying
-        ? { minWidth: 220, maxWidth: 340 }
-        : { maxWidth: 340 };
+      return occupying ? { minWidth: 220, maxWidth: 340 } : { maxWidth: 340 };
   }
 }
 
@@ -541,11 +539,7 @@ function IslandFace({
           node={node}
           snapshot={snapshot}
           onAction={(actionId, payload) => {
-            void engine.activities.action(
-              snapshot.pluginId,
-              actionId,
-              payload,
-            );
+            void engine.activities.action(snapshot.pluginId, actionId, payload);
           }}
         />
       </div>

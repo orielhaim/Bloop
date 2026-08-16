@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use specta::Type;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Type)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -49,7 +50,9 @@ pub enum UiNode {
         max: f64,
     },
     SeekBar {
+        #[specta(type = f64)]
         position_ms: u64,
+        #[specta(type = f64)]
         duration_ms: u64,
         action: String,
     },
@@ -93,7 +96,7 @@ pub enum UiNode {
     },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Type)]
 #[serde(rename_all = "camelCase")]
 pub enum TextVariant {
     #[default]
@@ -103,7 +106,7 @@ pub enum TextVariant {
     Numeric,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Type)]
 #[serde(rename_all = "camelCase")]
 pub enum Align {
     #[default]

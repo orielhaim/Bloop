@@ -12,6 +12,8 @@ use tauri_plugin_store::StoreExt;
 
 pub struct AppState {
     pub engine: Arc<Engine>,
+    #[allow(dead_code)]
+    pub event_subscription: bloop_core::events::Subscription,
 }
 
 fn map_err(error: impl std::fmt::Display) -> String {
@@ -19,23 +21,27 @@ fn map_err(error: impl std::fmt::Display) -> String {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn island_state(state: State<AppState>) -> IslandState {
     state.engine.island_state()
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn island_open(state: State<AppState>) -> IslandState {
     state.engine.activities.open_home();
     state.engine.island_state()
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn island_collapse(state: State<AppState>) -> IslandState {
     state.engine.activities.collapse();
     state.engine.island_state()
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn activity_action(
     state: State<AppState>,
     plugin_id: String,
@@ -50,11 +56,13 @@ pub fn activity_action(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_settings(state: State<AppState>) -> AppSettings {
     state.engine.settings.get()
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_settings(
     app: AppHandle,
     state: State<AppState>,
@@ -74,6 +82,7 @@ pub fn set_settings(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_layout(
     app: AppHandle,
     state: State<AppState>,
@@ -88,11 +97,13 @@ pub fn set_layout(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_plugins(state: State<AppState>) -> Vec<bloop_core::PluginRecord> {
     state.engine.plugins.list()
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn enable_plugin(
     app: AppHandle,
     state: State<AppState>,
@@ -104,6 +115,7 @@ pub fn enable_plugin(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn disable_plugin(
     app: AppHandle,
     state: State<AppState>,
@@ -115,14 +127,19 @@ pub fn disable_plugin(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn reload_plugin(
+    app: AppHandle,
     state: State<AppState>,
     id: String,
 ) -> Result<bloop_core::PluginRecord, String> {
-    state.engine.plugins.reload(&id).map_err(map_err)
+    let record = state.engine.plugins.reload(&id).map_err(map_err)?;
+    persist_settings(&app, &state.engine.settings.get())?;
+    Ok(record)
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn uninstall_plugin(app: AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
     state.engine.plugins.uninstall(&id).map_err(map_err)?;
     persist_settings(&app, &state.engine.settings.get())?;
@@ -130,22 +147,26 @@ pub fn uninstall_plugin(app: AppHandle, state: State<AppState>, id: String) -> R
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn dismiss_activity(state: State<AppState>, activity_id: String) -> IslandState {
     state.engine.activities.dismiss(&activity_id);
     state.engine.island_state()
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_themes(state: State<AppState>) -> Vec<ThemeDocument> {
     state.engine.themes.list()
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn current_theme(state: State<AppState>) -> ThemeDocument {
     state.engine.themes.current()
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn apply_theme(
     app: AppHandle,
     state: State<AppState>,
@@ -163,6 +184,7 @@ pub fn apply_theme(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn media_artwork(state: State<AppState>, session_id: String) -> Option<String> {
     let id = session_id.split("::").next().unwrap_or(session_id.as_str());
     state
@@ -173,6 +195,7 @@ pub fn media_artwork(state: State<AppState>, session_id: String) -> Option<Strin
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_monitors(app: AppHandle) -> Result<Vec<MonitorInfo>, String> {
     let window = app
         .get_webview_window("main")
@@ -198,6 +221,7 @@ pub fn list_monitors(app: AppHandle) -> Result<Vec<MonitorInfo>, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn check_updates() -> UpdateStatus {
     UpdateStatus {
         available: false,
@@ -206,7 +230,7 @@ pub fn check_updates() -> UpdateStatus {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateStatus {
     pub available: bool,
@@ -214,7 +238,7 @@ pub struct UpdateStatus {
     pub message: String,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MonitorInfo {
     pub id: String,
@@ -277,6 +301,10 @@ pub fn plugin_roots(app: &AppHandle) -> Vec<PathBuf> {
     if let Ok(dir) = app.path().app_data_dir() {
         roots.push(dir.join("plugins"));
     }
-    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins"));
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    roots.push(workspace.join("plugins"));
+    roots.push(workspace.join("target/debug/plugins"));
+    roots.push(workspace.join("target/release/plugins"));
+    roots.retain(|root| root.is_dir());
     roots
 }

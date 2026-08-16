@@ -28,6 +28,7 @@ fn presence_state() -> Arc<Mutex<PresenceHit>> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn set_island_presence(mode: String, width: f64, height: f64) -> Result<(), String> {
     let state = presence_state();
     let mut current = state.lock().map_err(|_| "presence lock failed")?;

@@ -1,11 +1,6 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { InfoIcon, PaletteIcon, Settings2Icon, StoreIcon } from "lucide-react";
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { applyTheme } from "@/animation/tokens";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,9 +23,16 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { engine } from "@/lib/engine";
 import {
+  queryKeys,
+  useEngineEventInvalidation,
+  useMonitorsQuery,
+  usePluginsQuery,
+  useSettingsQuery,
+  useThemesQuery,
+} from "@/lib/engine/query";
+import {
   type AppSettings,
   fallbackSettings,
-  fallbackTheme,
   type IdleProvider,
   type MonitorInfo,
   type PluginRecord,
@@ -42,49 +44,44 @@ type Section = "island" | "appearance" | "store" | "about";
 
 export function SettingsApp() {
   const [section, setSection] = useState<Section>("island");
-  const [settings, setSettings] = useState<AppSettings>(fallbackSettings);
-  const [plugins, setPlugins] = useState<PluginRecord[]>([]);
-  const [themes, setThemes] = useState<ThemeDocument[]>([fallbackTheme]);
-  const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
   const [updateMessage, setUpdateMessage] = useState("Not checked yet.");
+  const queryClient = useQueryClient();
 
-  const refresh = useCallback(async () => {
-    const [nextSettings, nextPlugins, nextThemes, nextMonitors] =
-      await Promise.all([
-        engine.settings.get(),
-        engine.plugins.list(),
-        engine.themes.list(),
-        engine.windows.monitors(),
-      ]);
-    setSettings(nextSettings);
-    setPlugins(nextPlugins);
-    setThemes(nextThemes);
-    setMonitors(nextMonitors);
-    const visible = visibleThemes(nextThemes, nextPlugins);
-    const theme =
-      visible.find((item) => item.id === nextSettings.themeId) ??
+  const settingsQuery = useSettingsQuery();
+  const pluginsQuery = usePluginsQuery();
+  const themesQuery = useThemesQuery();
+  const monitorsQuery = useMonitorsQuery();
+  useEngineEventInvalidation();
+
+  const settings = settingsQuery.data ?? fallbackSettings;
+  const plugins = pluginsQuery.data ?? [];
+  const themes = themesQuery.data ?? [];
+  const monitors = monitorsQuery.data ?? [];
+
+  const activeTheme = useMemo(() => {
+    const visible = visibleThemes(themes, plugins);
+    return (
+      visible.find((item) => item.id === settings.themeId) ??
       visible[0] ??
-      nextThemes[0];
-    if (theme) {
-      applyTheme(theme);
-    }
-  }, []);
+      themes[0] ??
+      null
+    );
+  }, [plugins, settings.themeId, themes]);
 
   useEffect(() => {
     document.documentElement.classList.add("dark", "settings-surface");
-    void refresh();
-    const stop = engine.events.subscribe(() => {
-      void refresh();
-    });
-    return () => {
-      void stop.then((unlisten) => unlisten());
-    };
-  }, [refresh]);
+  }, []);
+
+  useEffect(() => {
+    if (activeTheme) {
+      applyTheme(activeTheme);
+    }
+  }, [activeTheme]);
 
   const save = async (next: AppSettings) => {
-    setSettings(next);
     await engine.settings.update(next);
-    await refresh();
+    await queryClient.invalidateQueries({ queryKey: queryKeys.settings });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.plugins });
   };
 
   const appearanceThemes = useMemo(
@@ -123,7 +120,14 @@ export function SettingsApp() {
           <PluginStore
             plugins={plugins}
             settings={settings}
-            onChange={refresh}
+            onChange={() => {
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.plugins,
+              });
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.themes,
+              });
+            }}
             onSave={save}
           />
         ) : (
@@ -141,7 +145,14 @@ export function SettingsApp() {
                 settings={settings}
                 themes={appearanceThemes}
                 onSave={save}
-                onRefresh={refresh}
+                onRefresh={() => {
+                  void queryClient.invalidateQueries({
+                    queryKey: queryKeys.themes,
+                  });
+                  void queryClient.invalidateQueries({
+                    queryKey: queryKeys.settings,
+                  });
+                }}
               />
             ) : null}
             {section === "about" ? (

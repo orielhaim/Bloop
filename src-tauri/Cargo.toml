@@ -14,11 +14,16 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 bloop-core = { path = "../crates/bloop-core" }
+notify = "8"
+specta = "=2.0.0-rc.25"
+specta-typescript = "=0.0.12"
 tauri = { version = "2", features = ["tray-icon"] }
+tauri-specta = { version = "=2.0.0-rc.25", features = ["typescript"] }
 tauri-plugin-opener = "2"
 tracing = "0.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml.workspace = true
 tauri-plugin-store = "2"
 tauri-plugin-log = "2"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std", "env-filter", "ansi"] }

@@ -20,7 +20,11 @@ export function progress(value: number, max = 1): UiNode {
   return { kind: "progress", value, max };
 }
 
-export function iconButton(id: string, iconName: string, label: string): UiNode {
+export function iconButton(
+  id: string,
+  iconName: string,
+  label: string,
+): UiNode {
   return { kind: "iconButton", id, icon: iconName, label };
 }
 

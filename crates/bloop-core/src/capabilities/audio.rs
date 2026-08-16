@@ -3,6 +3,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::error::EngineResult;
+use crate::events::{Signal, Subscription};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,7 +94,7 @@ impl AudioBackend for NullAudio {
 
 pub struct AudioService {
     backend: Arc<dyn AudioBackend>,
-    listeners: parking_lot::Mutex<Vec<Arc<dyn Fn(AudioEvent) + Send + Sync>>>,
+    events: Signal<AudioEvent>,
     last: parking_lot::Mutex<Option<AudioState>>,
 }
 
@@ -115,13 +116,17 @@ impl AudioService {
     pub fn new(backend: Arc<dyn AudioBackend>) -> Self {
         Self {
             backend,
-            listeners: parking_lot::Mutex::new(Vec::new()),
+            events: Signal::new(),
             last: parking_lot::Mutex::new(None),
         }
     }
 
-    pub fn subscribe(&self, listener: impl Fn(AudioEvent) + Send + Sync + 'static) {
-        self.listeners.lock().push(Arc::new(listener));
+    /// Subscribe to audio events; drop the subscription to unsubscribe.
+    pub fn subscribe(
+        &self,
+        listener: impl Fn(&AudioEvent) + Send + Sync + 'static,
+    ) -> Subscription {
+        self.events.subscribe(listener)
     }
 
     /// Deliver a raw change reported by the native backend, suppressing events
@@ -133,7 +138,9 @@ impl AudioService {
         };
         let mut last = self.last.lock();
         if let Some(face) = face
-            && last.as_ref().is_some_and(|current| current.same_face(&face))
+            && last
+                .as_ref()
+                .is_some_and(|current| current.same_face(&face))
         {
             return;
         }
@@ -141,9 +148,7 @@ impl AudioService {
             *last = Some(face);
         }
         drop(last);
-        for listener in self.listeners.lock().iter() {
-            listener(event.clone());
-        }
+        self.events.emit(&event);
     }
 
     pub fn state(&self) -> AudioState {
@@ -238,7 +243,7 @@ mod tests {
         let events: parking_lot::Mutex<Vec<AudioEvent>> = parking_lot::Mutex::new(Vec::new());
         let seen = Arc::new(events);
         let listener = seen.clone();
-        service.subscribe(move |event| listener.lock().push(event));
+        let _sub = service.subscribe(move |event| listener.lock().push(event.clone()));
 
         service.emit(snapshot(AudioState {
             volume: 0.5,
@@ -257,7 +262,7 @@ mod tests {
         let events: parking_lot::Mutex<Vec<AudioEvent>> = parking_lot::Mutex::new(Vec::new());
         let seen = Arc::new(events);
         let listener = seen.clone();
-        service.subscribe(move |event| listener.lock().push(event));
+        let _sub = service.subscribe(move |event| listener.lock().push(event.clone()));
 
         for volume in [0.4, 0.42, 0.44, 0.46, 0.48, 0.5] {
             service.emit(snapshot(AudioState {
@@ -275,7 +280,7 @@ mod tests {
         let events: parking_lot::Mutex<Vec<AudioEvent>> = parking_lot::Mutex::new(Vec::new());
         let seen = Arc::new(events);
         let listener = seen.clone();
-        service.subscribe(move |event| listener.lock().push(event));
+        let _sub = service.subscribe(move |event| listener.lock().push(event.clone()));
 
         service.set_mute(true).unwrap();
         service.emit(snapshot(service.state()));
@@ -287,7 +292,11 @@ mod tests {
         assert_eq!(service.state().volume, 1.0);
         assert!(matches!(service.set_volume(-0.1), Ok(())));
         assert_eq!(service.state().volume, 0.0);
-        assert_eq!(seen.lock().len(), 1, "only the explicit mute event was forwarded");
+        assert_eq!(
+            seen.lock().len(),
+            1,
+            "only the explicit mute event was forwarded"
+        );
     }
 
     #[test]
@@ -296,7 +305,7 @@ mod tests {
         let events: parking_lot::Mutex<Vec<AudioEvent>> = parking_lot::Mutex::new(Vec::new());
         let seen = Arc::new(events);
         let listener = seen.clone();
-        service.subscribe(move |event| listener.lock().push(event));
+        let _sub = service.subscribe(move |event| listener.lock().push(event.clone()));
 
         let device = AudioDevice {
             id: "out-1".into(),
@@ -304,7 +313,9 @@ mod tests {
             active: true,
             metadata: Some(AudioDeviceMetadata { default: true }),
         };
-        service.emit(AudioEvent::DeviceChanged { device: device.clone() });
+        service.emit(AudioEvent::DeviceChanged {
+            device: device.clone(),
+        });
         service.emit(AudioEvent::DeviceChanged { device });
         assert_eq!(seen.lock().len(), 2, "device changes are not deduplicated");
     }
@@ -334,5 +345,34 @@ mod tests {
             eprintln!("  {device:?}");
         }
         assert!(!devices.is_empty(), "expected at least one output device");
+    }
+
+    /// Verifies a volume change flows through the real backend callback into the
+    /// service signal (temporarily nudges the system volume by ~1%, then
+    /// restores it). Run with `cargo test -p bloop-core -- --ignored`.
+    #[test]
+    #[ignore]
+    fn windows_audio_emits_on_change() {
+        let service = AudioService::connect();
+        let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let listener = events.clone();
+        let _sub = service.subscribe(move |event: &AudioEvent| {
+            listener.lock().push(event.clone());
+        });
+        let current = service.state();
+        let target = if current.volume > 0.5 {
+            current.volume - 0.01
+        } else {
+            current.volume + 0.01
+        };
+        service.set_volume(target).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1_200));
+        let got = events.lock().clone();
+        eprintln!("emitted events on volume change: {got:?}");
+        service.set_volume(current.volume).unwrap();
+        assert!(
+            !got.is_empty(),
+            "setting volume to {target} from {current:?} should emit an event"
+        );
     }
 }

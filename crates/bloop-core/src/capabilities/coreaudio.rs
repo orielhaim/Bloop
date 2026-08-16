@@ -126,8 +126,7 @@ struct AudioShared {
 #[cfg(windows)]
 type EndpointVolume = windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 #[cfg(windows)]
-type EndpointVolumeCallback =
-    windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolumeCallback;
+type EndpointVolumeCallback = windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolumeCallback;
 
 #[cfg(windows)]
 struct AudioSession {
@@ -146,7 +145,9 @@ struct VolumeCallback {
 }
 
 #[cfg(windows)]
-impl windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolumeCallback_Impl for VolumeCallback_Impl {
+impl windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolumeCallback_Impl
+    for VolumeCallback_Impl
+{
     fn OnNotify(
         &self,
         pnotify: *mut windows::Win32::Media::Audio::AUDIO_VOLUME_NOTIFICATION_DATA,
@@ -163,7 +164,12 @@ impl windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolumeCallback_Impl 
             let mut cache = self.shared.cache.lock();
             cache.state = state;
         }
-        let output = self.shared.session.lock().as_ref().map(|s| s.device.clone());
+        let output = self
+            .shared
+            .session
+            .lock()
+            .as_ref()
+            .map(|s| s.device.clone());
         (self.shared.on_event)(AudioEvent::StateChanged { state, output });
         Ok(())
     }
@@ -226,7 +232,11 @@ impl DeviceCallback_Impl {
             let Some(session) = session.as_ref() else {
                 return;
             };
-            match unsafe { session.enumerator.GetDefaultAudioEndpoint(eRender, eConsole) } {
+            match unsafe {
+                session
+                    .enumerator
+                    .GetDefaultAudioEndpoint(eRender, eConsole)
+            } {
                 Ok(device) => (session.enumerator.clone(), device),
                 Err(_) => return,
             }
@@ -245,9 +255,7 @@ impl DeviceCallback_Impl {
             }
         }
 
-        let volume = match unsafe {
-            device.Activate::<EndpointVolume>(CLSCTX_ALL, None)
-        } {
+        let volume = match unsafe { device.Activate::<EndpointVolume>(CLSCTX_ALL, None) } {
             Ok(volume) => volume,
             Err(_) => return,
         };
@@ -273,7 +281,9 @@ impl DeviceCallback_Impl {
             cache.output = Some(audio_device.clone());
             cache.devices = devices;
         }
-        (self.shared.on_event)(AudioEvent::DeviceChanged { device: audio_device });
+        (self.shared.on_event)(AudioEvent::DeviceChanged {
+            device: audio_device,
+        });
     }
 }
 
@@ -337,14 +347,13 @@ fn setup_audio(shared: &Arc<AudioShared>) -> Result<(), String> {
     .map_err(|error| error.to_string())?;
     let device = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }
         .map_err(|error| error.to_string())?;
-    let output = describe_device(&device, true).map_err(|()| {
-        "unable to describe default audio device".to_string()
-    })?;
+    let output = describe_device(&device, true)
+        .map_err(|()| "unable to describe default audio device".to_string())?;
     let volume: EndpointVolume = unsafe { device.Activate::<EndpointVolume>(CLSCTX_ALL, None) }
         .map_err(|error| error.to_string())?;
 
-    let level = unsafe { volume.GetMasterVolumeLevelScalar() }
-        .map_err(|error| error.to_string())?;
+    let level =
+        unsafe { volume.GetMasterVolumeLevelScalar() }.map_err(|error| error.to_string())?;
     let muted = unsafe { volume.GetMute() }.map_err(|error| error.to_string())?;
     let state = AudioState {
         volume: level.clamp(0.0, 1.0),
@@ -427,8 +436,8 @@ fn device_id(device: &windows::Win32::Media::Audio::IMMDevice) -> Result<String,
 
 #[cfg(windows)]
 fn device_name(device: &windows::Win32::Media::Audio::IMMDevice) -> Option<String> {
-    use windows::Win32::System::Com::StructuredStorage::PropVariantClear;
     use windows::Win32::System::Com::STGM_READ;
+    use windows::Win32::System::Com::StructuredStorage::PropVariantClear;
     use windows::Win32::System::Variant::VT_LPWSTR;
     use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
     unsafe {
@@ -478,7 +487,11 @@ fn pump_messages(rx: mpsc::Receiver<AudioOp>, shared: &Arc<AudioShared>) {
         match rx.try_recv() {
             Ok(AudioOp::SetVolume(volume)) => {
                 if let Some(session) = shared.session.lock().as_ref() {
-                    let _ = unsafe { session.volume.SetMasterVolumeLevelScalar(volume, std::ptr::null()) };
+                    let _ = unsafe {
+                        session
+                            .volume
+                            .SetMasterVolumeLevelScalar(volume, std::ptr::null())
+                    };
                 }
             }
             Ok(AudioOp::SetMute(muted)) => {

@@ -1,23 +1,23 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crossbeam_channel::{Receiver, Sender, bounded, select};
 use parking_lot::Mutex;
-use wasmtime::component::{Component, HasSelf, Linker, ResourceAny, ResourceTable};
+use wasmtime::component::{Component, HasSelf, Linker, ResourceTable};
 use wasmtime::{Engine as WasmEngine, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
-use super::manifest::{Permissions, PluginManifest};
-use super::package::{NamespacedStore, PluginRecord};
+use super::manifest::Permissions;
+use super::package::{PluginRecord, PluginStore};
 use super::permissions::{assert_audio, assert_devices, assert_media, assert_storage};
-use super::watches::WatchRegistry;
+use super::watches::{Capability, WatchRegistry};
 use crate::activity::{ActivityService, ActivitySnapshot};
 use crate::capabilities::{
-    AudioDevice, AudioDeviceMetadata, AudioService, Device, DeviceKind, DeviceService,
-    HttpRequest, HttpService, MediaEvent, MediaService, MediaSession, RepeatMode,
+    AudioDevice, AudioDeviceMetadata, AudioEvent, AudioService, Device, DeviceEvent, DeviceKind,
+    DeviceService, HttpRequest, HttpService, MediaEvent, MediaService, MediaSession, RepeatMode,
 };
 use crate::error::{EngineError, EngineResult};
 use crate::events::{EngineEvent, EventBus};
@@ -31,10 +31,64 @@ wasmtime::component::bindgen!({
 pub enum PluginCommand {
     Initialize,
     Action { id: String, payload: String },
-    Timer { id: String },
-    Event { topic: String, payload: String },
     SettingsChanged,
     Shutdown,
+}
+
+/// Handle to a running plugin worker. Control commands travel over a bounded
+/// channel; typed capability events are delivered through a coalescing inbox
+/// that keeps only the latest event per capability so a slow plugin cannot
+/// accumulate unbounded snapshots.
+#[derive(Clone)]
+pub struct WorkerHandle {
+    pub control: Sender<PluginCommand>,
+    inbox: Arc<EventInbox>,
+}
+
+impl WorkerHandle {
+    pub fn post_event(&self, event: bloop::abi::capability::CapabilityEvent) {
+        self.inbox.post(event);
+    }
+}
+
+/// Latest-wins per-capability event delivery.
+struct EventInbox {
+    latest: parking_lot::Mutex<HashMap<Capability, bloop::abi::capability::CapabilityEvent>>,
+    signal: Sender<()>,
+}
+
+impl EventInbox {
+    fn new() -> (Arc<Self>, Receiver<()>) {
+        let (signal, wake) = bounded(1);
+        (
+            Arc::new(Self {
+                latest: parking_lot::Mutex::new(HashMap::new()),
+                signal,
+            }),
+            wake,
+        )
+    }
+
+    fn post(&self, event: bloop::abi::capability::CapabilityEvent) {
+        self.latest.lock().insert(event_capability(&event), event);
+        // At most one wakeup is queued; if one is already pending the worker
+        // will drain the latest state when it wakes.
+        let _ = self.signal.try_send(());
+    }
+
+    fn drain(&self) -> Vec<bloop::abi::capability::CapabilityEvent> {
+        std::mem::take(&mut *self.latest.lock())
+            .into_values()
+            .collect()
+    }
+}
+
+fn event_capability(event: &bloop::abi::capability::CapabilityEvent) -> Capability {
+    match event {
+        bloop::abi::capability::CapabilityEvent::Media(_) => Capability::Media,
+        bloop::abi::capability::CapabilityEvent::Audio(_) => Capability::Audio,
+        bloop::abi::capability::CapabilityEvent::Devices(_) => Capability::Devices,
+    }
 }
 
 pub struct HostState {
@@ -46,7 +100,7 @@ pub struct HostState {
     pub audio: Arc<AudioService>,
     pub devices: Arc<DeviceService>,
     pub watches: Arc<WatchRegistry>,
-    pub storage: Arc<Mutex<NamespacedStore>>,
+    pub storage: Arc<PluginStore>,
     pub settings: Arc<SettingsService>,
     pub activities: Arc<ActivityService>,
     pub events: Arc<EventBus>,
@@ -79,15 +133,6 @@ impl HostState {
     fn require_devices(&self) -> Result<(), bloop::abi::types::Error> {
         assert_devices(&self.permissions).map_err(Into::into)
     }
-
-    fn persist_storage(&self) {
-        let Some(path) = &self.persist_path else {
-            return;
-        };
-        if let Err(error) = self.storage.lock().save(path) {
-            tracing::warn!(plugin = %self.plugin_id, %error, "plugin storage persist failed");
-        }
-    }
 }
 
 impl WasiView for HostState {
@@ -103,6 +148,7 @@ impl bloop::abi::types::Host for HostState {}
 impl bloop::abi::media::Host for HostState {}
 impl bloop::abi::audio::Host for HostState {}
 impl bloop::abi::devices::Host for HostState {}
+impl bloop::abi::capability::Host for HostState {}
 
 impl bloop::abi::host::Host for HostState {
     fn log(&mut self, level: String, message: String) {
@@ -156,30 +202,30 @@ impl bloop::abi::host::Host for HostState {
         if assert_storage(&self.permissions).is_err() {
             return None;
         }
-        self.storage.lock().get(&self.plugin_id, &key)
+        self.storage.get(&self.plugin_id, &key)
     }
 
     fn storage_set(&mut self, key: String, value: String) -> Result<(), bloop::abi::types::Error> {
         assert_storage(&self.permissions).map_err(Into::<bloop::abi::types::Error>::into)?;
         self.charge(value.len())
             .map_err(Into::<bloop::abi::types::Error>::into)?;
-        self.storage.lock().set(&self.plugin_id, &key, value);
-        self.persist_storage();
-        Ok(())
+        self.storage
+            .set(&self.plugin_id, &key, value)
+            .map_err(Into::<bloop::abi::types::Error>::into)
     }
 
     fn storage_delete(&mut self, key: String) -> Result<(), bloop::abi::types::Error> {
         assert_storage(&self.permissions).map_err(Into::<bloop::abi::types::Error>::into)?;
-        self.storage.lock().delete(&self.plugin_id, &key);
-        self.persist_storage();
-        Ok(())
+        self.storage
+            .delete(&self.plugin_id, &key)
+            .map_err(Into::<bloop::abi::types::Error>::into)
     }
 
     fn storage_list(&mut self) -> Vec<String> {
         if assert_storage(&self.permissions).is_err() {
             return Vec::new();
         }
-        self.storage.lock().list(&self.plugin_id)
+        self.storage.list(&self.plugin_id)
     }
 
     fn publish(&mut self, snapshot_json: String) -> Result<(), bloop::abi::types::Error> {
@@ -238,29 +284,45 @@ impl bloop::abi::host::Host for HostState {
         self.media.find(&query).as_ref().map(to_wit_session)
     }
 
-    fn watch(&mut self, topic: String, filter: String) -> Result<(), bloop::abi::types::Error> {
-        match topic.as_str() {
-            "media" => self.require_media()?,
-            "audio" => self.require_audio()?,
-            "devices" => self.require_devices()?,
-            other => {
-                return Err(bloop::abi::types::Error::Configuration(format!(
-                    "unknown watch topic {other}"
-                )))
+    fn watch(
+        &mut self,
+        capability: bloop::abi::capability::Capability,
+        filter: String,
+    ) -> Result<(), bloop::abi::types::Error> {
+        let capability = match capability {
+            bloop::abi::capability::Capability::Media => {
+                self.require_media()?;
+                Capability::Media
             }
-        }
-        self.watches.subscribe(&self.plugin_id, &topic, &filter);
+            bloop::abi::capability::Capability::Audio => {
+                self.require_audio()?;
+                Capability::Audio
+            }
+            bloop::abi::capability::Capability::Devices => {
+                self.require_devices()?;
+                Capability::Devices
+            }
+        };
+        self.watches.subscribe(&self.plugin_id, capability, &filter);
         Ok(())
     }
 
-    fn unwatch(&mut self, topic: String) {
-        self.watches.unsubscribe(&self.plugin_id, &topic);
+    fn unwatch(&mut self, capability: bloop::abi::capability::Capability) {
+        let capability = match capability {
+            bloop::abi::capability::Capability::Media => Capability::Media,
+            bloop::abi::capability::Capability::Audio => Capability::Audio,
+            bloop::abi::capability::Capability::Devices => Capability::Devices,
+        };
+        self.watches.unsubscribe(&self.plugin_id, capability);
     }
 
     fn audio_current(&mut self) -> Result<bloop::abi::audio::AudioState, bloop::abi::types::Error> {
         self.require_audio()?;
         let state = self.audio.state();
-        let output = self.audio.output().map(|device| to_wit_audio_device(&device));
+        let output = self
+            .audio
+            .output()
+            .map(|device| to_wit_audio_device(&device));
         Ok(bloop::abi::audio::AudioState {
             volume: state.volume,
             muted: state.muted,
@@ -417,11 +479,11 @@ fn to_wit_audio_device(device: &AudioDevice) -> bloop::abi::audio::AudioDevice {
         id: device.id.clone(),
         name: device.name.clone(),
         active: device.active,
-        metadata: device
-            .metadata
-            .map(|metadata: AudioDeviceMetadata| bloop::abi::audio::AudioDeviceMetadata {
+        metadata: device.metadata.map(|metadata: AudioDeviceMetadata| {
+            bloop::abi::audio::AudioDeviceMetadata {
                 default: metadata.default,
-            }),
+            }
+        }),
     }
 }
 
@@ -442,6 +504,65 @@ fn to_wit_device(device: &Device) -> bloop::abi::devices::Device {
         paired: device.paired,
         battery: device.battery,
     }
+}
+
+fn to_audio_event(event: &AudioEvent) -> bloop::abi::audio::AudioEvent {
+    match event {
+        AudioEvent::StateChanged { state, output } => {
+            bloop::abi::audio::AudioEvent::StateChanged(bloop::abi::audio::AudioState {
+                volume: state.volume,
+                muted: state.muted,
+                output_device: output.as_ref().map(to_wit_audio_device),
+            })
+        }
+        AudioEvent::DeviceChanged { device } => {
+            bloop::abi::audio::AudioEvent::DeviceChanged(to_wit_audio_device(device))
+        }
+    }
+}
+
+fn to_device_event(event: &DeviceEvent) -> bloop::abi::devices::DeviceEvent {
+    match event {
+        DeviceEvent::Connected { device } => {
+            bloop::abi::devices::DeviceEvent::Connected(to_wit_device(device))
+        }
+        DeviceEvent::Disconnected { device } => {
+            bloop::abi::devices::DeviceEvent::Disconnected(to_wit_device(device))
+        }
+        DeviceEvent::Updated { device } => {
+            bloop::abi::devices::DeviceEvent::Updated(to_wit_device(device))
+        }
+    }
+}
+
+fn to_media_event(event: &MediaEvent) -> bloop::abi::media::MediaEvent {
+    match event {
+        MediaEvent::SessionsChanged { sessions } => bloop::abi::media::MediaEvent::SessionsChanged(
+            sessions.iter().map(to_wit_session).collect(),
+        ),
+        MediaEvent::SessionUpdated { session } => {
+            bloop::abi::media::MediaEvent::SessionUpdated(to_wit_session(session))
+        }
+    }
+}
+
+fn to_capability_event(event: &MediaEvent) -> bloop::abi::capability::CapabilityEvent {
+    bloop::abi::capability::CapabilityEvent::Media(to_media_event(event))
+}
+
+/// Typed capability event for a media change.
+pub fn media_capability_event(event: &MediaEvent) -> bloop::abi::capability::CapabilityEvent {
+    to_capability_event(event)
+}
+
+/// Typed capability event for an audio change.
+pub fn audio_capability_event(event: &AudioEvent) -> bloop::abi::capability::CapabilityEvent {
+    bloop::abi::capability::CapabilityEvent::Audio(to_audio_event(event))
+}
+
+/// Typed capability event for a device change.
+pub fn devices_capability_event(event: &DeviceEvent) -> bloop::abi::capability::CapabilityEvent {
+    bloop::abi::capability::CapabilityEvent::Devices(to_device_event(event))
 }
 
 impl From<EngineError> for bloop::abi::types::Error {
@@ -485,23 +606,22 @@ pub fn spawn_activity_plugin(
     audio: Arc<AudioService>,
     devices: Arc<DeviceService>,
     watches: Arc<WatchRegistry>,
-    storage: Arc<Mutex<NamespacedStore>>,
+    storage: Arc<PluginStore>,
     settings: Arc<SettingsService>,
     activities: Arc<ActivityService>,
     events: Arc<EventBus>,
     persist_path: Option<PathBuf>,
-) -> EngineResult<Sender<PluginCommand>> {
+) -> EngineResult<WorkerHandle> {
     let component_path = record
         .component_path
         .clone()
         .ok_or_else(|| EngineError::Configuration("missing component".into()))?;
-    let (tx, rx) = mpsc::channel();
+    let (control_tx, control_rx) = bounded(64);
+    let (inbox, wake) = EventInbox::new();
     let plugin_id = record.id.clone();
     let permissions = record.manifest.permissions.clone();
     let timers = Arc::new(Mutex::new(HashMap::new()));
-    let timer_tx = tx.clone();
-    let timer_map = timers.clone();
-    let timer_plugin = plugin_id.clone();
+    let inbox_for_thread = inbox.clone();
 
     thread::Builder::new()
         .name(format!("plugin-{plugin_id}"))
@@ -522,7 +642,9 @@ pub fn spawn_activity_plugin(
                 events.clone(),
                 timers,
                 persist_path,
-                rx,
+                control_rx,
+                wake,
+                inbox_for_thread,
             ) {
                 tracing::error!(plugin = %plugin_id, %error, "plugin worker failed");
                 events.emit(EngineEvent::PluginError {
@@ -533,33 +655,10 @@ pub fn spawn_activity_plugin(
         })
         .map_err(|error| EngineError::Runtime(error.to_string()))?;
 
-    thread::spawn(move || {
-        let mut last = HashMap::<String, Instant>::new();
-        loop {
-            thread::sleep(Duration::from_millis(100));
-            let snapshot: Vec<(String, u32)> = timer_map
-                .lock()
-                .iter()
-                .map(|(id, interval)| (id.clone(), *interval))
-                .collect();
-            let now = Instant::now();
-            for (id, interval) in snapshot {
-                let Some(fired) = last.get(&id).copied() else {
-                    last.insert(id, now);
-                    continue;
-                };
-                if now.duration_since(fired) >= Duration::from_millis(u64::from(interval)) {
-                    last.insert(id.clone(), now);
-                    if timer_tx.send(PluginCommand::Timer { id }).is_err() {
-                        tracing::debug!(plugin = %timer_plugin, "timer thread exiting");
-                        return;
-                    }
-                }
-            }
-        }
-    });
-
-    Ok(tx)
+    Ok(WorkerHandle {
+        control: control_tx,
+        inbox,
+    })
 }
 
 fn run_plugin_loop(
@@ -572,13 +671,15 @@ fn run_plugin_loop(
     audio: Arc<AudioService>,
     devices: Arc<DeviceService>,
     watches: Arc<WatchRegistry>,
-    storage: Arc<Mutex<NamespacedStore>>,
+    storage: Arc<PluginStore>,
     settings: Arc<SettingsService>,
     activities: Arc<ActivityService>,
     events: Arc<EventBus>,
     timers: Arc<Mutex<HashMap<String, u32>>>,
     persist_path: Option<PathBuf>,
-    rx: Receiver<PluginCommand>,
+    control_rx: Receiver<PluginCommand>,
+    wake: Receiver<()>,
+    inbox: Arc<EventInbox>,
 ) -> EngineResult<()> {
     let component = Component::from_file(&engine, &component_path)
         .map_err(|error| EngineError::Runtime(format!("{plugin_id}: {error}")))?;
@@ -606,7 +707,7 @@ fn run_plugin_loop(
         settings,
         activities,
         events: events.clone(),
-        timers,
+        timers: timers.clone(),
         allocations: 0,
         persist_path,
         wasi: WasiCtxBuilder::new().build(),
@@ -614,67 +715,193 @@ fn run_plugin_loop(
     };
     let mut store = Store::new(&engine, state);
     store.limiter(|state| &mut state.limits);
-    store.set_epoch_deadline(250);
+    arm_epoch(&mut store);
 
     let bindings = ActivityPlugin::instantiate(&mut store, &component, &linker)
         .map_err(|error| EngineError::Runtime(format!("{plugin_id}: {error}")))?;
 
-    while let Ok(command) = rx.recv() {
-        store.set_epoch_deadline(250);
-        let result = match command {
-            PluginCommand::Initialize => {
-                let result = bindings
-                    .bloop_abi_activity()
-                    .call_initialize(&mut store)
-                    .map_err(|error| error.to_string())
-                    .and_then(|inner| inner);
-                if result.is_ok() {
-                    let payload = {
-                        let data = store.data();
-                        serde_json::to_string(&MediaEvent::SessionsChanged {
-                            sessions: data.media.sessions(),
-                        })
-                        .unwrap_or_else(|_| "{}".into())
-                    };
-                    let _ = bindings
-                        .bloop_abi_activity()
-                        .call_on_event(&mut store, "media", &payload);
+    // Timers are driven by the worker itself through select! deadlines instead
+    // of a per-plugin polling thread, so a plugin with no timers sleeps
+    // indefinitely.
+    let mut last_fire = HashMap::<String, Instant>::new();
+
+    loop {
+        // Drain queued control commands, then the latest per-capability events.
+        while let Ok(command) = control_rx.try_recv() {
+            if handle_command(&bindings, &mut store, command, &plugin_id, &events) {
+                return Ok(());
+            }
+        }
+        for event in inbox.drain() {
+            report_guest(
+                &plugin_id,
+                &events,
+                invoke_guest(&mut store, |store| {
+                    bindings.bloop_abi_activity().call_on_event(store, &event)
+                }),
+            );
+        }
+
+        let next_deadline = next_timer_deadline(&timers, &last_fire);
+        let mut exit = false;
+        match next_deadline {
+            Some(duration) => {
+                let timer = crossbeam_channel::after(duration);
+                select! {
+                    recv(control_rx) -> message => {
+                        if let Ok(command) = message {
+                            exit = handle_command(&bindings, &mut store, command, &plugin_id, &events);
+                        } else {
+                            exit = true;
+                        }
+                    }
+                    recv(wake) -> _ => {}
+                    recv(timer) -> _ => {
+                        fire_due_timers(&bindings, &mut store, &*timers, &mut last_fire, &plugin_id, &events);
+                    }
                 }
-                result
             }
-            PluginCommand::Action { id, payload } => bindings
-                .bloop_abi_activity()
-                .call_on_action(&mut store, &id, &payload)
-                .map_err(|error| error.to_string())
-                .and_then(|inner| inner),
-            PluginCommand::Timer { id } => bindings
-                .bloop_abi_activity()
-                .call_on_timer(&mut store, &id)
-                .map_err(|error| error.to_string())
-                .and_then(|inner| inner),
-            PluginCommand::Event { topic, payload } => bindings
-                .bloop_abi_activity()
-                .call_on_event(&mut store, &topic, &payload)
-                .map_err(|error| error.to_string())
-                .and_then(|inner| inner),
-            PluginCommand::SettingsChanged => bindings
-                .bloop_abi_activity()
-                .call_on_settings_changed(&mut store)
-                .map_err(|error| error.to_string())
-                .and_then(|inner| inner),
-            PluginCommand::Shutdown => {
-                let _ = bindings.bloop_abi_activity().call_shutdown(&mut store);
-                break;
+            None => {
+                select! {
+                    recv(control_rx) -> message => {
+                        if let Ok(command) = message {
+                            exit = handle_command(&bindings, &mut store, command, &plugin_id, &events);
+                        } else {
+                            exit = true;
+                        }
+                    }
+                    recv(wake) -> _ => {}
+                }
             }
-        };
-        if let Err(error) = result {
-            events.emit(EngineEvent::PluginError {
-                id: plugin_id.clone(),
-                message: error,
-            });
+        }
+        if exit {
+            return Ok(());
         }
     }
-    Ok(())
+}
+
+/// Time until the next plugin timer should fire, if any are registered.
+fn next_timer_deadline(
+    timers: &Mutex<HashMap<String, u32>>,
+    last_fire: &HashMap<String, Instant>,
+) -> Option<Duration> {
+    let now = Instant::now();
+    timers
+        .lock()
+        .iter()
+        .map(|(id, interval)| {
+            let last = last_fire.get(id.as_str()).copied().unwrap_or(now);
+            let due = Duration::from_millis(u64::from(*interval));
+            due.saturating_sub(now.duration_since(last))
+                .max(Duration::from_millis(1))
+        })
+        .min()
+}
+
+/// Fire every plugin timer whose interval has elapsed since its last fire.
+fn fire_due_timers(
+    bindings: &ActivityPlugin,
+    store: &mut Store<HostState>,
+    timers: &Mutex<HashMap<String, u32>>,
+    last_fire: &mut HashMap<String, Instant>,
+    plugin_id: &str,
+    events: &Arc<EventBus>,
+) {
+    let now = Instant::now();
+    let due: Vec<String> = timers
+        .lock()
+        .iter()
+        .filter(|(id, interval)| {
+            let last = last_fire.get(id.as_str()).copied().unwrap_or(now);
+            now.duration_since(last) >= Duration::from_millis(u64::from(**interval))
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in due {
+        last_fire.insert(id.clone(), now);
+        report_guest(
+            plugin_id,
+            events,
+            invoke_guest(store, |store| {
+                bindings.bloop_abi_activity().call_on_timer(store, &id)
+            }),
+        );
+    }
+}
+
+/// Runs one control command. Returns `true` when the worker should exit.
+fn handle_command(
+    bindings: &ActivityPlugin,
+    store: &mut Store<HostState>,
+    command: PluginCommand,
+    plugin_id: &str,
+    events: &Arc<EventBus>,
+) -> bool {
+    let result = match command {
+        PluginCommand::Initialize => {
+            let result = invoke_guest(store, |store| {
+                bindings.bloop_abi_activity().call_initialize(store)
+            });
+            if result.is_ok() {
+                let sessions = store.data().media.sessions();
+                let event = to_capability_event(&MediaEvent::SessionsChanged { sessions });
+                report_guest(
+                    plugin_id,
+                    events,
+                    invoke_guest(store, |store| {
+                        bindings.bloop_abi_activity().call_on_event(store, &event)
+                    }),
+                );
+            }
+            result
+        }
+        PluginCommand::Action { id, payload } => invoke_guest(store, |store| {
+            bindings
+                .bloop_abi_activity()
+                .call_on_action(store, &id, &payload)
+        }),
+        PluginCommand::SettingsChanged => invoke_guest(store, |store| {
+            bindings
+                .bloop_abi_activity()
+                .call_on_settings_changed(store)
+        }),
+        PluginCommand::Shutdown => {
+            arm_epoch(store);
+            let _ = bindings.bloop_abi_activity().call_shutdown(&mut *store);
+            return true;
+        }
+    };
+    report_guest(plugin_id, events, result);
+    false
+}
+
+/// Ticks until a guest call is interrupted. The epoch thread increments every
+/// 10ms, so this is a 2.5s budget per invocation — not for the lifetime of the
+/// worker. Forgetting to re-arm means every later `on_event` / `on_timer` traps.
+const GUEST_EPOCH_TICKS: u64 = 250;
+
+fn arm_epoch(store: &mut Store<HostState>) {
+    store.set_epoch_deadline(GUEST_EPOCH_TICKS);
+}
+
+fn invoke_guest<E: std::fmt::Display>(
+    store: &mut Store<HostState>,
+    call: impl FnOnce(&mut Store<HostState>) -> Result<Result<(), String>, E>,
+) -> Result<(), String> {
+    arm_epoch(store);
+    call(store)
+        .map_err(|error| error.to_string())
+        .and_then(|inner| inner)
+}
+
+fn report_guest<T>(plugin_id: &str, events: &Arc<EventBus>, result: Result<T, String>) {
+    if let Err(error) = result {
+        tracing::error!(plugin = %plugin_id, %error, "plugin guest call failed");
+        events.emit(EngineEvent::PluginError {
+            id: plugin_id.to_string(),
+            message: error,
+        });
+    }
 }
 
 pub fn inspect_component(path: &Path) -> EngineResult<()> {
@@ -682,13 +909,6 @@ pub fn inspect_component(path: &Path) -> EngineResult<()> {
     Component::from_file(&engine, path)
         .map(|_| ())
         .map_err(|error| EngineError::Compatibility(format!("incompatible component: {error}")))
-}
-
-#[allow(dead_code)]
-fn _resource_any(_: ResourceAny) {}
-
-pub fn validate_activity_manifest(_manifest: &PluginManifest) -> EngineResult<()> {
-    Ok(())
 }
 
 pub fn event_matches(event: &MediaEvent, query: &str) -> bool {
@@ -699,5 +919,96 @@ pub fn event_matches(event: &MediaEvent, query: &str) -> bool {
                 || sessions.iter().any(|session| session.matches_query(query))
         }
         MediaEvent::SessionUpdated { session } => session.matches_query(query),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn audio_event(volume: f32) -> bloop::abi::capability::CapabilityEvent {
+        bloop::abi::capability::CapabilityEvent::Audio(bloop::abi::audio::AudioEvent::StateChanged(
+            bloop::abi::audio::AudioState {
+                volume,
+                muted: false,
+                output_device: None,
+            },
+        ))
+    }
+
+    fn devices_event() -> bloop::abi::capability::CapabilityEvent {
+        bloop::abi::capability::CapabilityEvent::Devices(
+            bloop::abi::devices::DeviceEvent::Connected(bloop::abi::devices::Device {
+                id: "d1".into(),
+                name: "Buds".into(),
+                kind: bloop::abi::devices::DeviceKind::Headphones,
+                connected: true,
+                paired: true,
+                battery: None,
+            }),
+        )
+    }
+
+    #[test]
+    fn event_inbox_coalesces_latest_per_capability() {
+        let (inbox, wake) = EventInbox::new();
+        inbox.post(audio_event(1.0));
+        inbox.post(audio_event(2.0));
+        inbox.post(audio_event(3.0));
+        inbox.post(devices_event());
+
+        let drained = inbox.drain();
+        assert_eq!(drained.len(), 2, "latest per capability only");
+        let audio = drained.iter().find_map(|event| match event {
+            bloop::abi::capability::CapabilityEvent::Audio(
+                bloop::abi::audio::AudioEvent::StateChanged(state),
+            ) => Some(state.volume),
+            _ => None,
+        });
+        assert_eq!(audio, Some(3.0));
+        assert!(
+            drained
+                .iter()
+                .any(|event| matches!(event, bloop::abi::capability::CapabilityEvent::Devices(_)))
+        );
+        assert!(inbox.drain().is_empty(), "drain consumes the slot");
+
+        // A fresh post signals the worker again.
+        inbox.post(audio_event(4.0));
+        assert!(wake.recv_timeout(Duration::from_millis(200)).is_ok());
+    }
+
+    #[test]
+    fn event_inbox_signal_is_single_shot() {
+        let (inbox, _wake) = EventInbox::new();
+        inbox.post(audio_event(1.0));
+        inbox.post(audio_event(2.0));
+        inbox.post(audio_event(3.0));
+        // The wake channel holds at most one wakeup.
+        assert_eq!(inbox.signal.len(), 1);
+    }
+
+    #[test]
+    fn media_event_matches_filters_by_query() {
+        let session = crate::capabilities::MediaSession {
+            id: "Spotify.exe".into(),
+            app_id: "Spotify.exe".into(),
+            app_name: "Spotify".into(),
+            title: "Track".into(),
+            artist: "Artist".into(),
+            album: String::new(),
+            state: crate::capabilities::PlaybackState::Playing,
+            position_ms: 0,
+            duration_ms: 0,
+            last_updated_ms: 0,
+            playback_rate: 1.0,
+            shuffle: None,
+            repeat: crate::capabilities::RepeatMode::None,
+            controls: crate::capabilities::MediaControls::default(),
+            has_artwork: false,
+        };
+        let event = crate::capabilities::MediaEvent::SessionUpdated { session };
+        assert!(event_matches(&event, "spotify"));
+        assert!(!event_matches(&event, "vlc"));
     }
 }

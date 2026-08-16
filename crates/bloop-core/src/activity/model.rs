@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
+use specta::Type;
 
 use super::ui::UiNode;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Type)]
 #[serde(rename_all = "camelCase")]
 pub enum Priority {
     Background = 0,
@@ -34,7 +35,7 @@ impl Priority {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Type)]
 #[serde(rename_all = "camelCase")]
 pub enum PresentationMode {
     Compact,
@@ -45,7 +46,7 @@ pub enum PresentationMode {
 
 /// How wide the island should prefer to be for this activity. The renderer
 /// stays authoritative over final geometry; plugins only describe intent.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Type)]
 #[serde(rename_all = "camelCase")]
 pub enum PreferredSize {
     /// Content-driven within the standard face bounds.
@@ -59,7 +60,7 @@ pub enum PreferredSize {
     Wide,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivitySnapshot {
     pub activity_id: String,
@@ -75,6 +76,7 @@ pub struct ActivitySnapshot {
     #[serde(default)]
     pub preview: Option<UiNode>,
     #[serde(default)]
+    #[specta(type = f64)]
     pub timestamp_ms: u64,
     /// Updates sharing a coalescing key replace one presentation instead of
     /// being queued. Generic; a transient surface (for example a system volume

@@ -1,5 +1,6 @@
 import {
   Bluetooth,
+  Gamepad2,
   Headphones,
   Keyboard,
   Mouse,
@@ -11,7 +12,6 @@ import {
   SkipForward,
   Smartphone,
   Speaker,
-  Gamepad2,
   Volume1,
   Volume2,
   VolumeX,
@@ -293,12 +293,17 @@ function SeekBar({
   onSeek: (position: number) => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
+  const [scrub, setScrub] = useState<number | null>(null);
+  useEffect(() => {
+    setScrub(null);
+  }, [positionMs, timestampMs]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timer);
   }, []);
-  const elapsed = playing ? Math.max(0, now - timestampMs) : 0;
-  const current = Math.min(durationMs, positionMs + elapsed);
+  const origin = scrub ?? positionMs;
+  const elapsed = playing && scrub == null ? Math.max(0, now - timestampMs) : 0;
+  const current = Math.min(durationMs, origin + elapsed);
   const remaining = Math.max(0, durationMs - current);
   const percent = durationMs === 0 ? 0 : (current / durationMs) * 100;
 
@@ -316,7 +321,9 @@ function SeekBar({
             1,
             Math.max(0, (event.clientX - rect.left) / rect.width),
           );
-          onSeek(Math.round(ratio * durationMs));
+          const next = Math.round(ratio * durationMs);
+          setScrub(next);
+          onSeek(next);
         }}
       >
         <span className="ui-seek-fill" style={{ width: `${percent}%` }} />

@@ -4,9 +4,9 @@ wit_bindgen::generate!({
 });
 
 use crate::exports::bloop::abi::activity::Guest;
+use bloop::abi::audio::AudioState;
 use bloop_sdk as ui;
 use bloop_sdk::Snapshot;
-use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
 const PLUGIN_ID: &str = "bloop.activity.volume";
@@ -30,13 +30,6 @@ impl Default for Settings {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AudioState {
-    volume: f32,
-    muted: bool,
-}
-
 static SETTINGS: Mutex<Settings> = Mutex::new(Settings {
     show_on_mute: true,
     show_percentage: true,
@@ -50,7 +43,7 @@ impl Guest for VolumePlugin {
     fn initialize() -> Result<(), String> {
         *SETTINGS.lock().unwrap_or_else(|e| e.into_inner()) = load_settings();
         *LAST.lock().unwrap_or_else(|e| e.into_inner()) = current_state();
-        bloop::abi::host::watch("audio", "").map_err(err)?;
+        bloop::abi::host::watch(bloop::abi::capability::Capability::Audio, "").map_err(err)?;
         Ok(())
     }
 
@@ -62,22 +55,27 @@ impl Guest for VolumePlugin {
         Ok(())
     }
 
-    fn on_event(topic: String, _payload_json: String) -> Result<(), String> {
-        if topic != "audio" {
-            return Ok(());
+    fn on_event(event: bloop::abi::capability::CapabilityEvent) -> Result<(), String> {
+        match event {
+            bloop::abi::capability::CapabilityEvent::Audio(
+                bloop::abi::audio::AudioEvent::StateChanged(state),
+            ) => react(Some(state)),
+            bloop::abi::capability::CapabilityEvent::Audio(
+                bloop::abi::audio::AudioEvent::DeviceChanged(_),
+            ) => react(None),
+            _ => {}
         }
-        react();
         Ok(())
     }
 
     fn on_settings_changed() -> Result<(), String> {
         *SETTINGS.lock().unwrap_or_else(|e| e.into_inner()) = load_settings();
-        react();
+        react(None);
         Ok(())
     }
 
     fn shutdown() {
-        bloop::abi::host::unwatch("audio");
+        bloop::abi::host::unwatch(bloop::abi::capability::Capability::Audio);
         let _ = bloop::abi::host::dismiss(ACTIVITY_ID);
     }
 }
@@ -102,29 +100,28 @@ fn load_settings() -> Settings {
 }
 
 fn current_state() -> Option<AudioState> {
-    bloop::abi::host::audio_current()
-        .ok()
-        .map(|state| AudioState {
-            volume: state.volume,
-            muted: state.muted,
-        })
+    bloop::abi::host::audio_current().ok()
 }
 
-fn react() {
-    let Some(state) = current_state() else {
+fn react(event_state: Option<AudioState>) {
+    let Some(state) = event_state.or_else(current_state) else {
+        bloop::abi::host::log("error", "volume react: no audio state");
         return;
     };
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-    if last.is_some_and(|previous| previous == state) {
+    if last
+        .as_ref()
+        .is_some_and(|previous| previous.volume == state.volume && previous.muted == state.muted)
+    {
         return;
     }
     let settings = *SETTINGS.lock().unwrap_or_else(|e| e.into_inner());
-    if state.muted != last.map_or(state.muted, |previous| previous.muted) && !settings.show_on_mute
-    {
-        *last = Some(state);
+    let previous_muted = last.as_ref().map_or(state.muted, |previous| previous.muted);
+    if state.muted != previous_muted && !settings.show_on_mute {
+        *last = Some(state.clone());
         return;
     }
-    *last = Some(state);
+    *last = Some(state.clone());
     publish(&state, &settings);
 }
 
@@ -147,6 +144,8 @@ fn publish(state: &AudioState, settings: &Settings) {
         preferred_size: Some("medium"),
     }) {
         let _ = bloop::abi::host::publish(&json);
+    } else {
+        bloop::abi::host::log("error", "volume publish: snapshot serialization failed");
     }
 }
 

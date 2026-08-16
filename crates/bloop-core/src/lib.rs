@@ -17,7 +17,7 @@ pub use capabilities::{
     HttpBackend, HttpRequest, HttpResponse, HttpService, MediaControls, MediaEvent, MediaService,
     MediaSession, NullMedia, PlaybackState, RepeatMode, ReqwestBackend,
 };
-pub use codec::{data_url, encode_base64, sha256_hex};
+pub use codec::data_url;
 pub use error::{EngineError, EngineResult};
 pub use events::{EngineEvent, EventBus};
 pub use metrics::{ABI_VERSION, ENGINE_VERSION, IslandMetrics, Presence};

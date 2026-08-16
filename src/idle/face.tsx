@@ -17,6 +17,19 @@ export function occupiesIslandFace(
   return Boolean(activity?.peek) || activity?.mode === "presentation";
 }
 
+export function activitiesFromEnabledPlugins(
+  activities: ActivitySnapshot[],
+  plugins: { id: string; enabled: boolean }[],
+) {
+  if (plugins.length === 0) {
+    return activities;
+  }
+  const enabled = new Set(
+    plugins.filter((plugin) => plugin.enabled).map((plugin) => plugin.id),
+  );
+  return activities.filter((activity) => enabled.has(activity.pluginId));
+}
+
 export function retainOccupant(
   previous: ActivitySnapshot | null,
   current: ActivitySnapshot | null,
@@ -25,30 +38,22 @@ export function retainOccupant(
   if (occupiesIslandFace(current) && current) {
     return current;
   }
-  if (
-    previous?.peek &&
-    activities.some((activity) => activity.activityId === previous.activityId)
-  ) {
-    const listed = activities.find(
-      (activity) => activity.activityId === previous.activityId,
-    );
-    return {
-      ...previous,
-      ...listed,
-      peek: listed?.peek ?? previous.peek,
-      presentation: listed?.presentation ?? previous.presentation,
-      mode: "peek",
-    };
+  if (!previous || !occupiesIslandFace(previous)) {
+    return occupiesIslandFace(current) ? current : null;
   }
-  if (previous?.peek && (!current || current.activityId === previous.activityId)) {
-    return {
-      ...previous,
-      peek: current?.peek ?? previous.peek,
-      presentation: current?.presentation ?? previous.presentation,
-      mode: "peek",
-    };
+  const listed = activities.find(
+    (activity) => activity.activityId === previous.activityId,
+  );
+  if (!listed || !occupiesIslandFace(listed)) {
+    return null;
   }
-  return occupiesIslandFace(current) ? current : null;
+  return {
+    ...previous,
+    ...listed,
+    peek: listed.peek ?? previous.peek,
+    presentation: listed.presentation ?? previous.presentation,
+    mode: listed.mode === "presentation" ? listed.mode : "peek",
+  };
 }
 
 export function idleFaceKey(

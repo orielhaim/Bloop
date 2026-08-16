@@ -1,6 +1,10 @@
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { occupiesIslandFace, retainOccupant } from "@/idle/face";
+import {
+  activitiesFromEnabledPlugins,
+  occupiesIslandFace,
+  retainOccupant,
+} from "@/idle/face";
 import { engine } from "@/lib/engine";
 import {
   activityCatalog,
@@ -31,10 +35,7 @@ function resolvePresence(
   if (!state) {
     return stickyHover && idleKind !== "none" ? "peek" : "resting";
   }
-  if (
-    state.presence === "presentation" ||
-    occupant?.mode === "presentation"
-  ) {
+  if (state.presence === "presentation" || occupant?.mode === "presentation") {
     return "presentation";
   }
   if (occupiesIslandFace(occupant)) {
@@ -148,10 +149,26 @@ export function useIsland() {
     state?.sticky,
   ]);
 
+  const liveActivities = useMemo(
+    () => activitiesFromEnabledPlugins(state?.activities ?? [], plugins),
+    [plugins, state?.activities],
+  );
+  const liveCurrent = useMemo(() => {
+    const current = state?.activity ?? null;
+    if (!current) {
+      return null;
+    }
+    return liveActivities.some(
+      (activity) => activity.activityId === current.activityId,
+    )
+      ? current
+      : null;
+  }, [liveActivities, state?.activity]);
+
   const occupant = retainOccupant(
     occupantRef.current,
-    state?.activity ?? null,
-    state?.activities ?? [],
+    liveCurrent,
+    liveActivities,
   );
   occupantRef.current = occupant;
 
@@ -180,14 +197,16 @@ export function useIsland() {
   );
 
   const catalog = useMemo(
-    () => activityCatalog(plugins, state?.activities ?? []),
-    [plugins, state?.activities],
+    () => activityCatalog(plugins, liveActivities),
+    [liveActivities, plugins],
   );
 
   return {
     presence,
     occupant,
-    state,
+    state: state
+      ? { ...state, activity: liveCurrent, activities: liveActivities }
+      : state,
     settings,
     theme,
     catalog,

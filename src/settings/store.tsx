@@ -336,7 +336,7 @@ function PluginProduct({
                     plugin.enabled
                       ? engine.plugins.disable(plugin.id)
                       : engine.plugins.enable(plugin.id)
-                  ).then(onChange);
+                  ).then(() => onChange());
                 }}
               />
             ) : (
@@ -352,10 +352,9 @@ function PluginProduct({
               onReload={() => engine.plugins.reload(plugin.id).then(onChange)}
             />
           </div>
-          <p className="text-xs text-muted-foreground">
-            Status: {plugin.state}
-            {plugin.error ? ` · ${plugin.error}` : ""}
-          </p>
+          {plugin.error ? (
+            <p className="text-xs text-muted-foreground">{plugin.error}</p>
+          ) : null}
         </div>
       </div>
       <section className="grid gap-6 lg:grid-cols-2">

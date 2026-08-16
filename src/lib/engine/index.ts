@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { normalizeLayout } from "./layout";
+import type { EngineEvent } from "./types";
 import {
   type AppSettings,
   fallbackSettings,
@@ -118,9 +119,13 @@ export const engine = {
     },
   },
   events: {
-    async subscribe(handler: () => void): Promise<UnlistenFn> {
+    async subscribe(
+      handler: (event: EngineEvent) => void,
+    ): Promise<UnlistenFn> {
       try {
-        return await listen("engine-event", () => handler());
+        return await listen("engine-event", (event) =>
+          handler(event.payload as EngineEvent),
+        );
       } catch {
         return () => undefined;
       }

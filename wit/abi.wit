@@ -49,6 +49,11 @@ interface audio {
     muted: bool,
     output-device: option<audio-device>,
   }
+
+  variant audio-event {
+    state-changed(audio-state),
+    device-changed(audio-device),
+  }
 }
 
 interface devices {
@@ -71,6 +76,12 @@ interface devices {
     connected: bool,
     paired: bool,
     battery: option<u8>,
+  }
+
+  variant device-event {
+    connected(device),
+    disconnected(device),
+    updated(device),
   }
 }
 
@@ -121,6 +132,31 @@ interface media {
     controls: media-controls,
     has-artwork: bool,
   }
+
+  variant media-event {
+    sessions-changed(list<media-session>),
+    session-updated(media-session),
+  }
+}
+
+/// The native capabilities a plugin can subscribe to, and the typed events they
+/// deliver. Events are strongly typed end-to-end rather than stringly JSON.
+interface capability {
+  use media.{media-event};
+  use audio.{audio-event};
+  use devices.{device-event};
+
+  enum capability {
+    media,
+    audio,
+    devices,
+  }
+
+  variant capability-event {
+    media(media-event),
+    audio(audio-event),
+    devices(device-event),
+  }
 }
 
 interface host {
@@ -128,6 +164,7 @@ interface host {
   use media.{media-session, repeat-mode};
   use audio.{audio-state, audio-device};
   use devices.{device};
+  use capability.{capability};
 
   log: func(level: string, message: string);
   now-ms: func() -> u64;
@@ -141,8 +178,8 @@ interface host {
   set-timer: func(id: string, interval-ms: u32);
   clear-timer: func(id: string);
   get-setting: func(key: string) -> option<string>;
-  watch: func(topic: string, filter: string) -> result<_, error>;
-  unwatch: func(topic: string);
+  watch: func(capability: capability, filter: string) -> result<_, error>;
+  unwatch: func(capability: capability);
   media-sessions: func() -> list<media-session>;
   get-session: func(id: string) -> option<media-session>;
   media-current: func() -> option<media-session>;
@@ -166,10 +203,12 @@ interface host {
 }
 
 interface activity {
+  use capability.{capability-event};
+
   initialize: func() -> result<_, string>;
   on-action: func(action-id: string, payload-json: string) -> result<_, string>;
   on-timer: func(timer-id: string) -> result<_, string>;
-  on-event: func(topic: string, payload-json: string) -> result<_, string>;
+  on-event: func(event: capability-event) -> result<_, string>;
   on-settings-changed: func() -> result<_, string>;
   shutdown: func();
 }

@@ -1,3 +1,17 @@
+export type EngineEvent =
+  | { type: "pluginLoaded"; plugin: PluginRecord }
+  | { type: "pluginUnloaded"; id: string }
+  | { type: "pluginError"; id: string; message: string }
+  | { type: "activityPublished"; snapshot: ActivitySnapshot }
+  | { type: "activityUpdated"; snapshot: ActivitySnapshot }
+  | { type: "activityDismissed"; activityId: string }
+  | { type: "themeChanged"; id: string }
+  | { type: "settingsChanged" }
+  | { type: "displayChanged" }
+  | { type: "fullscreenChanged"; hidden: boolean }
+  | { type: "layoutChanged" }
+  | { type: "presenceChanged" };
+
 export type Presence = "resting" | "peek" | "presentation" | "expanded";
 
 export type TextVariant = "body" | "title" | "kicker" | "numeric";
