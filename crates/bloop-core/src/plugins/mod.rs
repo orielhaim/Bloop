@@ -2,13 +2,17 @@ mod manifest;
 mod package;
 mod permissions;
 pub mod runtime;
+mod watches;
 
 pub use manifest::*;
 pub use package::*;
 pub use permissions::*;
+pub use watches::*;
 
 use crate::activity::ActivityService;
-use crate::capabilities::{HttpService, MediaEvent, MediaService};
+use crate::capabilities::{
+    AudioService, DeviceService, HttpService, MediaEvent, MediaService,
+};
 use crate::error::{EngineError, EngineResult};
 use crate::events::{EngineEvent, EventBus};
 use crate::settings::SettingsService;
@@ -29,7 +33,9 @@ pub struct PluginManager {
     storage: Arc<Mutex<NamespacedStore>>,
     http: Arc<HttpService>,
     media: Arc<MediaService>,
-    watches: Arc<Mutex<HashMap<String, String>>>,
+    audio: Arc<AudioService>,
+    devices: Arc<DeviceService>,
+    watches: Arc<WatchRegistry>,
     settings: Arc<SettingsService>,
     activities: Arc<ActivityService>,
     themes: Arc<ThemeService>,
@@ -42,6 +48,8 @@ impl PluginManager {
     pub fn new(
         http: Arc<HttpService>,
         media: Arc<MediaService>,
+        audio: Arc<AudioService>,
+        devices: Arc<DeviceService>,
         settings: Arc<SettingsService>,
         activities: Arc<ActivityService>,
         themes: Arc<ThemeService>,
@@ -52,11 +60,31 @@ impl PluginManager {
         start_epoch_thread(wasm.clone());
         let workers: Arc<Mutex<HashMap<String, Sender<PluginCommand>>>> =
             Arc::new(Mutex::new(HashMap::new()));
-        let watches = Arc::new(Mutex::new(HashMap::new()));
+        let watches = Arc::new(WatchRegistry::default());
         let workers_for_media = workers.clone();
         let watches_for_media = watches.clone();
         media.subscribe(move |event| {
             dispatch_media_event(&workers_for_media, &watches_for_media, event);
+        });
+        let workers_for_audio = workers.clone();
+        let watches_for_audio = watches.clone();
+        audio.subscribe(move |event| {
+            dispatch_event(
+                &workers_for_audio,
+                &watches_for_audio,
+                "audio",
+                serde_json::to_string(&event).unwrap_or_else(|_| "{}".into()),
+            );
+        });
+        let workers_for_devices = workers.clone();
+        let watches_for_devices = watches.clone();
+        devices.subscribe(move |event| {
+            dispatch_event(
+                &workers_for_devices,
+                &watches_for_devices,
+                "devices",
+                serde_json::to_string(&event).unwrap_or_else(|_| "{}".into()),
+            );
         });
         let storage = persist_path
             .as_ref()
@@ -68,6 +96,8 @@ impl PluginManager {
             storage: Arc::new(Mutex::new(storage)),
             http,
             media,
+            audio,
+            devices,
             watches,
             settings,
             activities,
@@ -249,6 +279,8 @@ impl PluginManager {
                 record,
                 self.http.clone(),
                 self.media.clone(),
+                self.audio.clone(),
+                self.devices.clone(),
                 self.watches.clone(),
                 self.storage.clone(),
                 self.settings.clone(),
@@ -281,18 +313,34 @@ fn theme_from_record(record: &PluginRecord) -> Option<ThemeDocument> {
 
 fn dispatch_media_event(
     workers: &Arc<Mutex<HashMap<String, Sender<PluginCommand>>>>,
-    watches: &Arc<Mutex<HashMap<String, String>>>,
+    watches: &Arc<WatchRegistry>,
     event: MediaEvent,
 ) {
     let payload = serde_json::to_string(&event).unwrap_or_else(|_| "{}".into());
-    let watches = watches.lock().clone();
     let workers = workers.lock();
-    for (plugin_id, query) in watches {
+    for (plugin_id, query) in watches.subscribers("media") {
         if event_matches(&event, &query)
             && let Some(worker) = workers.get(&plugin_id)
         {
             let _ = worker.send(PluginCommand::Event {
                 topic: "media".into(),
+                payload: payload.clone(),
+            });
+        }
+    }
+}
+
+fn dispatch_event(
+    workers: &Arc<Mutex<HashMap<String, Sender<PluginCommand>>>>,
+    watches: &Arc<WatchRegistry>,
+    topic: &str,
+    payload: String,
+) {
+    let workers = workers.lock();
+    for (plugin_id, _filter) in watches.subscribers(topic) {
+        if let Some(worker) = workers.get(&plugin_id) {
+            let _ = worker.send(PluginCommand::Event {
+                topic: topic.into(),
                 payload: payload.clone(),
             });
         }

@@ -1,5 +1,6 @@
 import {
   ArrowLeftIcon,
+  BluetoothIcon,
   CheckIcon,
   GlobeIcon,
   HardDriveIcon,
@@ -7,6 +8,7 @@ import {
   RefreshCwIcon,
   SearchIcon,
   ShieldIcon,
+  Volume2Icon,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ActionSwapCascadeButton } from "@/components/ui/action-swap-cascade";
@@ -243,6 +245,9 @@ function PluginProduct({
     label: string;
     description?: string | null;
     default?: unknown;
+    min?: number;
+    max?: number;
+    step?: number;
   }[];
   const values = settings.pluginSettings[plugin.id] ?? {};
   const kinds = pluginKinds(plugin);
@@ -252,6 +257,20 @@ function PluginProduct({
           icon: RadioIcon,
           label: "Media session",
           detail: "Read the current playback session.",
+        }
+      : null,
+    plugin.manifest.permissions.audio
+      ? {
+          icon: Volume2Icon,
+          label: "Audio",
+          detail: "Read and control the system volume.",
+        }
+      : null,
+    plugin.manifest.permissions.devices
+      ? {
+          icon: BluetoothIcon,
+          label: "Devices",
+          detail: "Observe Bluetooth and device connection state.",
         }
       : null,
     plugin.manifest.permissions.storage
@@ -405,6 +424,45 @@ function PluginProduct({
                         pluginSettings: {
                           ...settings.pluginSettings,
                           [plugin.id]: { ...values, [field.key]: on },
+                        },
+                      });
+                    }}
+                  />
+                ) : field.type === "slider" ? (
+                  <input
+                    type="range"
+                    min={field.min ?? 0}
+                    max={field.max ?? 100}
+                    step={field.step ?? 1}
+                    className="w-48 accent-foreground"
+                    value={Number(values[field.key] ?? field.default ?? 0)}
+                    onChange={(event) => {
+                      void onSave({
+                        ...settings,
+                        pluginSettings: {
+                          ...settings.pluginSettings,
+                          [plugin.id]: {
+                            ...values,
+                            [field.key]: Number(event.target.value),
+                          },
+                        },
+                      });
+                    }}
+                  />
+                ) : field.type === "number" ? (
+                  <Input
+                    type="number"
+                    className="max-w-48"
+                    value={String(values[field.key] ?? field.default ?? "")}
+                    onChange={(event) => {
+                      void onSave({
+                        ...settings,
+                        pluginSettings: {
+                          ...settings.pluginSettings,
+                          [plugin.id]: {
+                            ...values,
+                            [field.key]: Number(event.target.value),
+                          },
                         },
                       });
                     }}

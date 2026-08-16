@@ -41,7 +41,11 @@ export type ActivitySnapshot = {
   expanded?: UiNode | null;
   preview?: UiNode | null;
   timestampMs: number;
+  coalescingKey?: string | null;
+  preferredSize?: PreferredSize | null;
 };
+
+export type PreferredSize = "auto" | "compact" | "medium" | "wide";
 
 export type IslandState = {
   presence: Presence;
@@ -122,8 +126,19 @@ export type PluginRecord = {
     author?: string | null;
     description?: string | null;
     icon?: string | null;
-    provides: { activity: boolean; theme: boolean; app?: boolean };
-    permissions: { network: string[]; storage: boolean; media: boolean };
+    provides: {
+      activity: boolean;
+      theme: boolean;
+      app?: boolean;
+      widget?: boolean;
+    };
+    permissions: {
+      network: string[];
+      storage: boolean;
+      media: boolean;
+      audio?: boolean;
+      devices?: boolean;
+    };
     homepage?: string | null;
     repository?: string | null;
     settings_schema: unknown[];

@@ -27,18 +27,24 @@ impl ActivityService {
     }
 
     pub fn publish(&self, snapshot: ActivitySnapshot) -> ScheduledView {
+        let mut scheduler = self.scheduler.lock();
+        if scheduler
+            .latest(&snapshot.activity_id)
+            .is_some_and(|existing| existing.same_face(&snapshot))
         {
-            let scheduler = self.scheduler.lock();
-            if scheduler
-                .latest(&snapshot.activity_id)
-                .is_some_and(|existing| existing.same_face(&snapshot))
-            {
-                return scheduler.view();
-            }
+            // A no-op update to a live transient presentation still extends its
+            // window without producing a visual change.
+            return scheduler.touch(&snapshot.activity_id, Instant::now());
         }
-        let view = self.scheduler.lock().publish(snapshot, Instant::now());
+        let view = scheduler.publish(snapshot, Instant::now());
+        drop(scheduler);
         self.events.emit(EngineEvent::PresenceChanged);
         view
+    }
+
+    /// Extend the presentation window of a live transient activity.
+    pub fn touch(&self, activity_id: &str) -> ScheduledView {
+        self.scheduler.lock().touch(activity_id, Instant::now())
     }
 
     pub fn dismiss(&self, activity_id: &str) -> ScheduledView {

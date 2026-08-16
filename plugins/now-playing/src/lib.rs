@@ -21,7 +21,7 @@ static LAST_SESSION: Mutex<Option<bloop::abi::media::MediaSession>> = Mutex::new
 
 impl Guest for NowPlayingPlugin {
     fn initialize() -> Result<(), String> {
-        bloop::abi::host::media_watch("").map_err(err)?;
+        bloop::abi::host::watch("media", "").map_err(err)?;
         bloop::abi::host::set_timer("media-poll", 2_000);
         match active_session() {
             Some(session) => publish_session(Some(session)),
@@ -84,7 +84,7 @@ impl Guest for NowPlayingPlugin {
     }
 
     fn shutdown() {
-        bloop::abi::host::media_unwatch();
+        bloop::abi::host::unwatch("media");
         let _ = bloop::abi::host::dismiss(ACTIVITY_ID);
     }
 }
@@ -310,6 +310,8 @@ fn publish_idle() {
         expanded: Some(idle),
         preview: Some(preview),
         timestamp_ms: bloop::abi::host::now_ms(),
+        coalescing_key: None,
+        preferred_size: None,
     });
 }
 
@@ -440,6 +442,8 @@ fn publish_views(
         expanded: Some(chrome.clone()),
         preview: Some(chrome),
         timestamp_ms: bloop::abi::host::now_ms(),
+        coalescing_key: None,
+        preferred_size: None,
     });
 }
 

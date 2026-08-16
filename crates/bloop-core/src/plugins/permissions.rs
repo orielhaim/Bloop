@@ -39,6 +39,22 @@ pub fn assert_media(permissions: &Permissions) -> EngineResult<()> {
     }
 }
 
+pub fn assert_audio(permissions: &Permissions) -> EngineResult<()> {
+    if permissions.audio {
+        Ok(())
+    } else {
+        Err(EngineError::Permission("audio is not granted".into()))
+    }
+}
+
+pub fn assert_devices(permissions: &Permissions) -> EngineResult<()> {
+    if permissions.devices {
+        Ok(())
+    } else {
+        Err(EngineError::Permission("devices is not granted".into()))
+    }
+}
+
 fn host_matches(host: &str, allowed: &str) -> bool {
     let allowed = allowed
         .trim()
@@ -86,6 +102,30 @@ mod tests {
         assert!(
             assert_media(&Permissions {
                 media: true,
+                ..Permissions::default()
+            })
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn audio_requires_grant() {
+        assert!(assert_audio(&Permissions::default()).is_err());
+        assert!(
+            assert_audio(&Permissions {
+                audio: true,
+                ..Permissions::default()
+            })
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn devices_requires_grant() {
+        assert!(assert_devices(&Permissions::default()).is_err());
+        assert!(
+            assert_devices(&Permissions {
+                devices: true,
                 ..Permissions::default()
             })
             .is_ok()

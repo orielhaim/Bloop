@@ -1,11 +1,22 @@
 import {
+  Bluetooth,
+  Headphones,
+  Keyboard,
+  Mouse,
   Pause,
   Play,
   Repeat,
   Shuffle,
   SkipBack,
   SkipForward,
+  Smartphone,
+  Speaker,
+  Gamepad2,
+  Volume1,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { type CSSProperties, useEffect, useState } from "react";
 import { engine } from "@/lib/engine";
 import type { ActivitySnapshot, UiNode } from "@/lib/engine/types";
@@ -18,6 +29,21 @@ const icons = {
   "skip-forward": SkipForward,
   shuffle: Shuffle,
   repeat: Repeat,
+  volume: Volume2,
+  "volume-mid": Volume1,
+  "volume-x": VolumeX,
+  bluetooth: Bluetooth,
+  headphones: Headphones,
+  speaker: Speaker,
+  keyboard: Keyboard,
+  mouse: Mouse,
+  gamepad: Gamepad2,
+  smartphone: Smartphone,
+};
+
+const fillTransition = {
+  duration: 0.18,
+  ease: [0.22, 1, 0.36, 1] as const,
 };
 
 export function ActivityView({
@@ -46,8 +72,17 @@ function Node({
       return <span className={cn("ui-text", node.variant)}>{node.text}</span>;
     case "secondaryText":
       return <span className="ui-secondary">{node.text}</span>;
-    case "icon":
+    case "icon": {
+      const Icon = icons[node.name as keyof typeof icons];
+      if (Icon) {
+        return (
+          <span className="ui-symbol" aria-hidden>
+            <Icon size={17} strokeWidth={1.9} />
+          </span>
+        );
+      }
       return <span className="ui-badge">{node.name}</span>;
+    }
     case "badge":
       return <span className="ui-badge">{node.text}</span>;
     case "separator":
@@ -68,11 +103,13 @@ function Node({
     case "progress":
       return (
         <span className="ui-progress">
-          <span
+          <motion.span
             className="ui-progress-fill"
-            style={{
+            initial={{ width: 0 }}
+            animate={{
               width: `${Math.min(100, ((node.value ?? 0) / (node.max ?? 1)) * 100)}%`,
             }}
+            transition={fillTransition}
           />
         </span>
       );

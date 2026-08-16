@@ -421,11 +421,33 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "windows 0.62.2",
+ "windows-collections 0.3.2",
+ "windows-core 0.62.2",
  "windows-future 0.3.2",
 ]
 
 [[package]]
+name = "bloop-plugin-bluetooth"
+version = "1.0.0"
+dependencies = [
+ "bloop-sdk",
+ "serde",
+ "serde_json",
+ "wit-bindgen 0.60.0",
+]
+
+[[package]]
 name = "bloop-plugin-now-playing"
+version = "1.0.0"
+dependencies = [
+ "bloop-sdk",
+ "serde",
+ "serde_json",
+ "wit-bindgen 0.60.0",
+]
+
+[[package]]
+name = "bloop-plugin-volume"
 version = "1.0.0"
 dependencies = [
  "bloop-sdk",

@@ -562,6 +562,19 @@
   font-weight: 700;
 }
 
+.ui-symbol {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--island-fg, #f4f4f5);
+}
+
+.face-live.presentation .ui-symbol,
+.face-live.peek .ui-symbol {
+  margin-top: 1px;
+}
+
 .ui-art {
   width: 44px;
   height: 44px;

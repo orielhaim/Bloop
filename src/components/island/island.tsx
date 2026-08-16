@@ -9,6 +9,7 @@ import { isSortable } from "@dnd-kit/react/sortable";
 import { motion } from "motion/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FiCheck, FiEdit2 } from "react-icons/fi";
+import { FaceSwap } from "./face-swap";
 import {
   ActivityIcon,
   ActivityTray,
@@ -22,13 +23,14 @@ import {
 } from "@/activities/home";
 import { ActivityView, nodeForPresence } from "@/activities/renderer";
 import { applyTheme } from "@/animation/tokens";
-import { IdleFace, occupiesIslandFace } from "@/idle/face";
+import { IdleFace, idleFaceKey, occupiesIslandFace } from "@/idle/face";
 import { engine } from "@/lib/engine";
 import { catalogItem, normalizeLayout } from "@/lib/engine/layout";
 import type {
   ActivitySnapshot,
   HomeLayout,
   IdleProvider,
+  PreferredSize,
 } from "@/lib/engine/types";
 import {
   expandedIsland,
@@ -54,19 +56,45 @@ function expandedWidth(count: number) {
   );
 }
 
-function shellMorph(reduced: boolean, collapsing: boolean) {
+function faceWidthBounds(
+  presence: Presence,
+  preferred: PreferredSize | null | undefined,
+  occupying: boolean,
+): { minWidth?: number; maxWidth?: number } {
+  switch (preferred) {
+    case "compact":
+      return { minWidth: 110, maxWidth: 200 };
+    case "medium":
+      return { minWidth: 220, maxWidth: 340 };
+    case "wide":
+      return { minWidth: 300, maxWidth: 420 };
+    default:
+      if (presence === "resting") {
+        return { minWidth: 110, maxWidth: 200 };
+      }
+      // Occupied faces get a comfortable floor; idle/empty surfaces size to
+      // their actual content.
+      return occupying
+        ? { minWidth: 220, maxWidth: 340 }
+        : { maxWidth: 340 };
+  }
+}
+
+function shellMorph(reduced: boolean, presence: Presence) {
   if (reduced) {
     return { duration: 0.08 };
   }
-  const duration = collapsing ? 0.22 : 0.38;
-  const ease = collapsing
-    ? ([0.32, 0.0, 0.2, 1] as const)
-    : ([0.16, 1, 0.3, 1] as const);
+  // Transient presentations (volume, device changes) snap wide quickly; the
+  // resting surface follows a touch faster than a full peek.
+  const transient = presence === "presentation";
+  const resting = presence === "resting";
+  const duration = transient ? 0.15 : resting ? 0.2 : 0.34;
+  const ease = [0.22, 1, 0.36, 1] as const;
   return {
     width: { type: "tween" as const, duration, ease },
     height: {
       type: "tween" as const,
-      duration: collapsing ? 0.24 : 0.42,
+      duration: transient ? 0.17 : resting ? 0.22 : 0.38,
       ease,
     },
     borderBottomLeftRadius: { type: "tween" as const, duration, ease },
@@ -125,8 +153,12 @@ export function Island() {
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const snapshot = occupant ?? state?.activity ?? null;
   const activities = state?.activities ?? [];
-  const occupying = occupiesIslandFace(snapshot);
   const layout = normalizeLayout(settings.layout);
+  const occupying = occupiesIslandFace(snapshot);
+  const bounds = faceWidthBounds(presence, snapshot?.preferredSize, occupying);
+  const faceId = snapshot
+    ? snapshot.activityId
+    : `idle:${idleFaceKey(settings.idleProvider, activities)}`;
   const [hoverLayout, setHoverLayout] = useState<HomeLayout | null>(null);
   const [holdSize, setHoldSize] = useState<{
     width: number;
@@ -147,8 +179,7 @@ export function Island() {
   const measureRef = useRef<HTMLDivElement>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const measureKey = `${presence}:${snapshot?.activityId ?? ""}:${JSON.stringify(settings.idleProvider)}:${displayLayout.items.join(",")}:${customizing}`;
-  const collapsing = presence === "resting";
-  const morph = shellMorph(reduced, collapsing);
+  const morph = shellMorph(reduced, presence);
 
   useLayoutEffect(() => {
     void measureKey;
@@ -195,6 +226,9 @@ export function Island() {
   const fade = reduced
     ? { duration: 0 }
     : { duration: 0.16, ease: [0.22, 1, 0.36, 1] as const };
+  // Transient presentations swap faces quickly; resting/peek changes use the
+  // standard, slower entrance.
+  const faceDuration = presence === "presentation" ? 0.2 : 0.36;
 
   const previewFromDrag = (event: DragOverEvent | DragMoveEvent) => {
     const source = event.operation.source;
@@ -282,14 +316,8 @@ export function Island() {
           className={`island-body island-measure ${presence}`}
           style={{
             width: expanded ? shellWidth : undefined,
-            minWidth: expanded
-              ? shellWidth
-              : presence === "resting"
-                ? 110
-                : occupying
-                  ? 220
-                  : undefined,
-            maxWidth: expanded ? shellWidth : 340,
+            minWidth: expanded ? shellWidth : bounds.minWidth,
+            maxWidth: expanded ? shellWidth : bounds.maxWidth,
           }}
         >
           <IslandFace
@@ -333,19 +361,26 @@ export function Island() {
                 <div
                   className={`island-body ${presence === "expanded" ? "peek" : presence}`}
                 >
-                  <IslandFace
-                    presence={presence === "expanded" ? "peek" : presence}
-                    snapshot={snapshot}
-                    activities={activities}
-                    idleProvider={settings.idleProvider}
-                    layout={layout}
-                    committed={layout}
-                    catalog={catalog}
-                    customizing={false}
-                    interactive={false}
+                  <FaceSwap
+                    id={faceId}
                     reduced={reduced}
-                    onLayout={updateLayout}
-                  />
+                    enabled={!expanded}
+                    duration={faceDuration}
+                  >
+                    <IslandFace
+                      presence={presence === "expanded" ? "peek" : presence}
+                      snapshot={snapshot}
+                      activities={activities}
+                      idleProvider={settings.idleProvider}
+                      layout={layout}
+                      committed={layout}
+                      catalog={catalog}
+                      customizing={false}
+                      interactive={false}
+                      reduced={reduced}
+                      onLayout={updateLayout}
+                    />
+                  </FaceSwap>
                 </div>
               </div>
               <motion.div

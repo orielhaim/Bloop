@@ -37,7 +37,7 @@ fn default_api() -> String {
     "1".into()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Provides {
     #[serde(default)]
     pub activity: bool,
@@ -45,6 +45,25 @@ pub struct Provides {
     pub theme: bool,
     #[serde(default)]
     pub app: bool,
+    /// Activity plugins can be "utilities": they only present transiently and
+    /// never occupy a home widget slot.
+    #[serde(default = "default_widget")]
+    pub widget: bool,
+}
+
+impl Default for Provides {
+    fn default() -> Self {
+        Self {
+            activity: false,
+            theme: false,
+            app: false,
+            widget: true,
+        }
+    }
+}
+
+fn default_widget() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -55,6 +74,10 @@ pub struct Permissions {
     pub storage: bool,
     #[serde(default)]
     pub media: bool,
+    #[serde(default)]
+    pub audio: bool,
+    #[serde(default)]
+    pub devices: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -227,6 +250,36 @@ activity = true
         )
         .unwrap_err();
         assert!(matches!(error, EngineError::Configuration(_)));
+    }
+
+    #[test]
+    fn widget_defaults_to_true() {
+        let manifest = PluginManifest::parse(
+            r#"
+id = "com.example.util"
+name = "Util"
+version = "1.0.0"
+icon = "icon.svg"
+[provides]
+activity = true
+"#,
+        )
+        .unwrap();
+        assert!(manifest.provides.widget);
+
+        let manifest = PluginManifest::parse(
+            r#"
+id = "com.example.util"
+name = "Util"
+version = "1.0.0"
+icon = "icon.svg"
+[provides]
+activity = true
+widget = false
+"#,
+        )
+        .unwrap();
+        assert!(!manifest.provides.widget);
     }
 
     #[test]

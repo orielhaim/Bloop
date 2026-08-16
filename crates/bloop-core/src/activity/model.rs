@@ -43,6 +43,22 @@ pub enum PresentationMode {
     Expanded,
 }
 
+/// How wide the island should prefer to be for this activity. The renderer
+/// stays authoritative over final geometry; plugins only describe intent.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum PreferredSize {
+    /// Content-driven within the standard face bounds.
+    #[default]
+    Auto,
+    /// Small, clock-like surfaces.
+    Compact,
+    /// Medium-wide surfaces such as level meters.
+    Medium,
+    /// Wide surfaces such as player chrome.
+    Wide,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivitySnapshot {
@@ -60,6 +76,14 @@ pub struct ActivitySnapshot {
     pub preview: Option<UiNode>,
     #[serde(default)]
     pub timestamp_ms: u64,
+    /// Updates sharing a coalescing key replace one presentation instead of
+    /// being queued. Generic; a transient surface (for example a system volume
+    /// or device change) keeps one live presentation across many updates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coalescing_key: Option<String>,
+    /// Preferred presentation width intent. Generic sizing hint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_size: Option<PreferredSize>,
 }
 
 impl ActivitySnapshot {

@@ -30,6 +30,50 @@ interface types {
   }
 }
 
+interface audio {
+  use types.{error};
+
+  record audio-device-metadata {
+    default: bool,
+  }
+
+  record audio-device {
+    id: string,
+    name: string,
+    active: bool,
+    metadata: option<audio-device-metadata>,
+  }
+
+  record audio-state {
+    volume: f32,
+    muted: bool,
+    output-device: option<audio-device>,
+  }
+}
+
+interface devices {
+  use types.{error};
+
+  enum device-kind {
+    headphones,
+    speaker,
+    keyboard,
+    mouse,
+    controller,
+    phone,
+    other,
+  }
+
+  record device {
+    id: string,
+    name: string,
+    kind: device-kind,
+    connected: bool,
+    paired: bool,
+    battery: option<u8>,
+  }
+}
+
 interface media {
   use types.{error};
 
@@ -82,6 +126,8 @@ interface media {
 interface host {
   use types.{error, http-request, http-response};
   use media.{media-session, repeat-mode};
+  use audio.{audio-state, audio-device};
+  use devices.{device};
 
   log: func(level: string, message: string);
   now-ms: func() -> u64;
@@ -95,12 +141,12 @@ interface host {
   set-timer: func(id: string, interval-ms: u32);
   clear-timer: func(id: string);
   get-setting: func(key: string) -> option<string>;
+  watch: func(topic: string, filter: string) -> result<_, error>;
+  unwatch: func(topic: string);
   media-sessions: func() -> list<media-session>;
   get-session: func(id: string) -> option<media-session>;
   media-current: func() -> option<media-session>;
   media-find: func(query: string) -> option<media-session>;
-  media-watch: func(query: string) -> result<_, error>;
-  media-unwatch: func();
   media-play: func(id: string) -> result<bool, error>;
   media-pause: func(id: string) -> result<bool, error>;
   media-toggle: func(id: string) -> result<bool, error>;
@@ -111,6 +157,12 @@ interface host {
   media-set-shuffle: func(id: string, on: bool) -> result<bool, error>;
   media-set-repeat: func(id: string, mode: repeat-mode) -> result<bool, error>;
   media-set-rate: func(id: string, rate: f64) -> result<bool, error>;
+  audio-current: func() -> result<audio-state, error>;
+  audio-devices: func() -> list<audio-device>;
+  audio-set-volume: func(volume: f32) -> result<_, error>;
+  audio-set-mute: func(muted: bool) -> result<_, error>;
+  audio-toggle-mute: func() -> result<_, error>;
+  device-list: func() -> list<device>;
 }
 
 interface activity {

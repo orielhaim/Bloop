@@ -1,0 +1,41 @@
+id = "bloop.activity.volume"
+name = "Volume"
+version = "1.0.0"
+api_version = "1"
+author = "Bloop"
+description = "Shows the system volume whenever it changes."
+entry = "component.wasm"
+enabled_by_default = true
+icon = "assets/icon.svg"
+
+[provides]
+activity = true
+theme = false
+widget = false
+
+[permissions]
+audio = true
+
+[[settings_schema]]
+type = "boolean"
+key = "showOnMute"
+label = "Show on mute/unmute"
+description = "Present the island when the output is muted or unmuted."
+default = true
+
+[[settings_schema]]
+type = "boolean"
+key = "showPercentage"
+label = "Show percentage"
+description = "Display the numeric volume level next to the bar."
+default = true
+
+[[settings_schema]]
+type = "slider"
+key = "durationMs"
+label = "Presentation duration"
+description = "How long the volume stays visible after the last change."
+min = 800.0
+max = 5000.0
+step = 100.0
+default = 1500.0

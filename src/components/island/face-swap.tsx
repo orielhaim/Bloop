@@ -7,11 +7,14 @@ export function FaceSwap({
   id,
   reduced,
   enabled = true,
+  duration,
   children,
 }: {
   id: string;
   reduced: boolean;
   enabled?: boolean;
+  /** Override the transition length; defaults to 0.5s. */
+  duration?: number;
   children: ReactNode;
 }) {
   if (!enabled) {
@@ -19,7 +22,7 @@ export function FaceSwap({
   }
   const transition = reduced
     ? { duration: 0 }
-    : { duration: 0.5, ease: swapEase };
+    : { duration: duration ?? 0.5, ease: swapEase };
   return (
     <div className="face-swap-stage">
       <AnimatePresence initial={false}>

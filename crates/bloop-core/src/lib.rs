@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 pub use activity::{ActivityService, ActivitySnapshot, IslandState, ScheduledView, UiNode};
 pub use capabilities::{
+    AudioDevice, AudioEvent, AudioService, Device, DeviceEvent, DeviceKind, DeviceService,
     HttpBackend, HttpRequest, HttpResponse, HttpService, MediaControls, MediaEvent, MediaService,
     MediaSession, NullMedia, PlaybackState, RepeatMode, ReqwestBackend,
 };
@@ -31,6 +32,8 @@ pub struct Engine {
     pub themes: Arc<ThemeService>,
     pub plugins: Arc<PluginManager>,
     pub media: Arc<MediaService>,
+    pub audio: Arc<AudioService>,
+    pub devices: Arc<DeviceService>,
     pub metrics: IslandMetrics,
 }
 
@@ -45,9 +48,13 @@ impl Engine {
         let activities = Arc::new(ActivityService::new(events.clone()));
         let themes = Arc::new(ThemeService::new());
         let media = MediaService::connect();
+        let audio = AudioService::connect();
+        let devices = DeviceService::connect();
         let plugins = Arc::new(PluginManager::new(
             Arc::new(HttpService::new(http)),
             media.clone(),
+            audio.clone(),
+            devices.clone(),
             settings.clone(),
             activities.clone(),
             themes.clone(),
@@ -61,6 +68,8 @@ impl Engine {
             themes,
             plugins,
             media,
+            audio,
+            devices,
             metrics: IslandMetrics::load(),
         })
     }

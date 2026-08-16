@@ -31,11 +31,13 @@ pub struct ActivityScheduler {
 
 impl ActivityScheduler {
     pub fn publish(&mut self, snapshot: ActivitySnapshot, now: Instant) -> ScheduledView {
-        if self
+        let same_face = self
             .latest
             .get(&snapshot.activity_id)
-            .is_some_and(|existing| existing.same_face(&snapshot))
-        {
+            .is_some_and(|existing| existing.same_face(&snapshot));
+        if same_face {
+            // A no-op update to a live transient presentation still extends it.
+            self.touch(&snapshot.activity_id, now);
             return self.view();
         }
         self.latest
@@ -46,6 +48,19 @@ impl ActivityScheduler {
                 .map(|ms| now + std::time::Duration::from_millis(u64::from(ms))),
             snapshot,
         };
+
+        // Refresh the currently live presentation in place (same activity or
+        // same coalescing slot) and extend its timeout.
+        let current_coalesces = self
+            .current
+            .as_ref()
+            .is_some_and(|current| {
+                same_activity_or_slot(&current.snapshot, &incoming.snapshot)
+            });
+        if current_coalesces {
+            self.current = Some(incoming);
+            return self.view();
+        }
 
         if self.user_expanded {
             if incoming.snapshot.mode == PresentationMode::Presentation
@@ -68,6 +83,23 @@ impl ActivityScheduler {
             return self.view();
         }
 
+        // An update to an activity that is parked or queued mutates that entry
+        // instead of preempting, so the latest state is what resumes later.
+        if let Some(queued) = self
+            .queue
+            .iter_mut()
+            .find(|item| item.snapshot.activity_id == incoming.snapshot.activity_id)
+        {
+            *queued = incoming;
+            return self.view();
+        }
+        if let Some(parked) = self.parked.as_mut()
+            && parked.snapshot.activity_id == incoming.snapshot.activity_id
+        {
+            *parked = incoming;
+            return self.view();
+        }
+
         if self.can_preempt(incoming.snapshot.priority) {
             if let Some(current) = self.current.take()
                 && current.snapshot.activity_id != incoming.snapshot.activity_id
@@ -75,18 +107,21 @@ impl ActivityScheduler {
                 self.parked = Some(current);
             }
             self.current = Some(incoming);
-        } else if incoming.snapshot.activity_id
-            == self
-                .current
-                .as_ref()
-                .map(|c| c.snapshot.activity_id.as_str())
-                .unwrap_or_default()
-        {
-            self.current = Some(incoming);
         } else {
             self.queue.push_back(incoming);
         }
 
+        self.view()
+    }
+
+    /// Extend the presentation of `activity_id` if it is currently live.
+    pub fn touch(&mut self, activity_id: &str, now: Instant) -> ScheduledView {
+        if let Some(current) = self.current.as_mut()
+            && current.snapshot.activity_id == activity_id
+            && let Some(lifetime_ms) = current.snapshot.lifetime_ms
+        {
+            current.until = Some(now + std::time::Duration::from_millis(u64::from(lifetime_ms)));
+        }
         self.view()
     }
 
@@ -147,6 +182,9 @@ impl ActivityScheduler {
                 {
                     self.current = None;
                 }
+                // A one-shot transient is done; it should not linger in the
+                // catalog or feed occupant retention.
+                self.latest.remove(&finished_id);
             }
         }
         self.view()
@@ -203,9 +241,10 @@ impl ActivityScheduler {
         let Some(current) = &self.current else {
             return true;
         };
-        incoming_priority > current.snapshot.priority
-            || (incoming_priority == current.snapshot.priority && current.snapshot.interruptible)
-            || current.snapshot.interruptible && incoming_priority >= current.snapshot.priority
+        if incoming_priority > current.snapshot.priority {
+            return true;
+        }
+        incoming_priority == current.snapshot.priority && current.snapshot.interruptible
     }
 
     fn retain_current(&mut self, incoming: LiveActivity) {
@@ -239,6 +278,12 @@ impl ActivityScheduler {
     }
 }
 
+fn same_activity_or_slot(left: &ActivitySnapshot, right: &ActivitySnapshot) -> bool {
+    left.activity_id == right.activity_id
+        || (left.coalescing_key.is_some()
+            && left.coalescing_key == right.coalescing_key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,6 +308,8 @@ mod tests {
             expanded: None,
             preview: None,
             timestamp_ms: 0,
+            coalescing_key: None,
+            preferred_size: None,
         }
     }
 
@@ -356,5 +403,104 @@ mod tests {
         );
         scheduler.dismiss("now-playing");
         assert!(scheduler.view().activity.is_none());
+    }
+
+    #[test]
+    fn updates_extend_presentation_timeout() {
+        let mut scheduler = ActivityScheduler::default();
+        let now = Instant::now();
+        scheduler.publish(snap("volume", 60, PresentationMode::Presentation, Some(200)), now);
+        let view = scheduler.view();
+        assert_eq!(view.activity.unwrap().activity_id, "volume");
+
+        // An update just inside the window keeps the presentation alive.
+        scheduler.publish(
+            snap("volume", 60, PresentationMode::Presentation, Some(200)),
+            now + std::time::Duration::from_millis(150),
+        );
+        scheduler.tick(now + std::time::Duration::from_millis(300));
+        assert_eq!(scheduler.view().activity.unwrap().activity_id, "volume");
+
+        // After the refreshed window elapses with no updates, it expires.
+        scheduler.tick(now + std::time::Duration::from_millis(500));
+        assert!(scheduler.view().activity.is_none());
+    }
+
+    #[test]
+    fn same_face_update_still_extends_timeout() {
+        let mut scheduler = ActivityScheduler::default();
+        let now = Instant::now();
+        scheduler.publish(snap("volume", 60, PresentationMode::Presentation, Some(100)), now);
+        scheduler.touch("volume", now + std::time::Duration::from_millis(90));
+        scheduler.tick(now + std::time::Duration::from_millis(150));
+        assert_eq!(
+            scheduler.view().activity.unwrap().activity_id,
+            "volume",
+            "a touch extends the presentation even for identical faces"
+        );
+        scheduler.tick(now + std::time::Duration::from_millis(250));
+        assert!(scheduler.view().activity.is_none());
+    }
+
+    #[test]
+    fn parked_activity_gets_latest_state_on_resume() {
+        let mut scheduler = ActivityScheduler::default();
+        let now = Instant::now();
+        scheduler.publish(snap("now-playing", 40, PresentationMode::Peek, None), now);
+        scheduler.publish(snap("volume", 60, PresentationMode::Presentation, Some(50)), now);
+        assert_eq!(scheduler.view().activity.unwrap().activity_id, "volume");
+
+        // While volume presents, now-playing updates its snapshot.
+        let mut next = snap("now-playing", 40, PresentationMode::Peek, None);
+        next.peek = Some(crate::activity::UiNode::Text {
+            text: "latest".into(),
+            variant: crate::activity::TextVariant::Title,
+        });
+        scheduler.publish(next, now);
+
+        scheduler.tick(now + std::time::Duration::from_millis(60));
+        let resumed = scheduler.view().activity.unwrap();
+        assert_eq!(resumed.activity_id, "now-playing");
+        assert_eq!(
+            resumed.peek,
+            Some(crate::activity::UiNode::Text {
+                text: "latest".into(),
+                variant: crate::activity::TextVariant::Title,
+            })
+        );
+    }
+
+    #[test]
+    fn coalescing_key_merges_slots() {
+        let mut scheduler = ActivityScheduler::default();
+        let now = Instant::now();
+        let mut slot_a = snap("volume-a", 60, PresentationMode::Presentation, Some(100));
+        slot_a.coalescing_key = Some("system-audio".into());
+        scheduler.publish(slot_a, now);
+        assert_eq!(scheduler.view().activity.unwrap().activity_id, "volume-a");
+
+        let mut slot_b = snap("volume-b", 60, PresentationMode::Presentation, Some(100));
+        slot_b.coalescing_key = Some("system-audio".into());
+        scheduler.publish(slot_b, now);
+        assert_eq!(
+            scheduler.view().activity.unwrap().activity_id,
+            "volume-b",
+            "same coalescing slot replaces instead of queuing"
+        );
+    }
+
+    #[test]
+    fn distinct_coalescing_slots_do_not_merge() {
+        let mut scheduler = ActivityScheduler::default();
+        let now = Instant::now();
+        let mut first = snap("volume", 60, PresentationMode::Presentation, Some(100));
+        first.coalescing_key = Some("system-audio".into());
+        scheduler.publish(first, now);
+        let mut second = snap("bluetooth", 60, PresentationMode::Presentation, Some(100));
+        second.coalescing_key = Some("system-devices".into());
+        scheduler.publish(second, now);
+        assert_eq!(scheduler.view().activity.unwrap().activity_id, "bluetooth");
+        scheduler.tick(now + std::time::Duration::from_millis(150));
+        assert_eq!(scheduler.view().activity.unwrap().activity_id, "volume");
     }
 }

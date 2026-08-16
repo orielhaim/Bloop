@@ -12,9 +12,11 @@ use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 use super::manifest::{Permissions, PluginManifest};
 use super::package::{NamespacedStore, PluginRecord};
-use super::permissions::{assert_media, assert_storage};
+use super::permissions::{assert_audio, assert_devices, assert_media, assert_storage};
+use super::watches::WatchRegistry;
 use crate::activity::{ActivityService, ActivitySnapshot};
 use crate::capabilities::{
+    AudioDevice, AudioDeviceMetadata, AudioService, Device, DeviceKind, DeviceService,
     HttpRequest, HttpService, MediaEvent, MediaService, MediaSession, RepeatMode,
 };
 use crate::error::{EngineError, EngineResult};
@@ -41,7 +43,9 @@ pub struct HostState {
     pub limits: StoreLimits,
     pub http: Arc<HttpService>,
     pub media: Arc<MediaService>,
-    pub watches: Arc<Mutex<HashMap<String, String>>>,
+    pub audio: Arc<AudioService>,
+    pub devices: Arc<DeviceService>,
+    pub watches: Arc<WatchRegistry>,
     pub storage: Arc<Mutex<NamespacedStore>>,
     pub settings: Arc<SettingsService>,
     pub activities: Arc<ActivityService>,
@@ -68,6 +72,14 @@ impl HostState {
         assert_media(&self.permissions).map_err(Into::into)
     }
 
+    fn require_audio(&self) -> Result<(), bloop::abi::types::Error> {
+        assert_audio(&self.permissions).map_err(Into::into)
+    }
+
+    fn require_devices(&self) -> Result<(), bloop::abi::types::Error> {
+        assert_devices(&self.permissions).map_err(Into::into)
+    }
+
     fn persist_storage(&self) {
         let Some(path) = &self.persist_path else {
             return;
@@ -89,6 +101,8 @@ impl WasiView for HostState {
 
 impl bloop::abi::types::Host for HostState {}
 impl bloop::abi::media::Host for HostState {}
+impl bloop::abi::audio::Host for HostState {}
+impl bloop::abi::devices::Host for HostState {}
 
 impl bloop::abi::host::Host for HostState {
     fn log(&mut self, level: String, message: String) {
@@ -224,14 +238,67 @@ impl bloop::abi::host::Host for HostState {
         self.media.find(&query).as_ref().map(to_wit_session)
     }
 
-    fn media_watch(&mut self, query: String) -> Result<(), bloop::abi::types::Error> {
-        self.require_media()?;
-        self.watches.lock().insert(self.plugin_id.clone(), query);
+    fn watch(&mut self, topic: String, filter: String) -> Result<(), bloop::abi::types::Error> {
+        match topic.as_str() {
+            "media" => self.require_media()?,
+            "audio" => self.require_audio()?,
+            "devices" => self.require_devices()?,
+            other => {
+                return Err(bloop::abi::types::Error::Configuration(format!(
+                    "unknown watch topic {other}"
+                )))
+            }
+        }
+        self.watches.subscribe(&self.plugin_id, &topic, &filter);
         Ok(())
     }
 
-    fn media_unwatch(&mut self) {
-        self.watches.lock().remove(&self.plugin_id);
+    fn unwatch(&mut self, topic: String) {
+        self.watches.unsubscribe(&self.plugin_id, &topic);
+    }
+
+    fn audio_current(&mut self) -> Result<bloop::abi::audio::AudioState, bloop::abi::types::Error> {
+        self.require_audio()?;
+        let state = self.audio.state();
+        let output = self.audio.output().map(|device| to_wit_audio_device(&device));
+        Ok(bloop::abi::audio::AudioState {
+            volume: state.volume,
+            muted: state.muted,
+            output_device: output,
+        })
+    }
+
+    fn audio_devices(&mut self) -> Vec<bloop::abi::audio::AudioDevice> {
+        if self.require_audio().is_err() {
+            return Vec::new();
+        }
+        self.audio
+            .devices()
+            .iter()
+            .map(to_wit_audio_device)
+            .collect()
+    }
+
+    fn audio_set_volume(&mut self, volume: f32) -> Result<(), bloop::abi::types::Error> {
+        self.require_audio()?;
+        self.audio.set_volume(volume).map_err(Into::into)
+    }
+
+    fn audio_set_mute(&mut self, muted: bool) -> Result<(), bloop::abi::types::Error> {
+        self.require_audio()?;
+        self.audio.set_mute(muted).map_err(Into::into)
+    }
+
+    fn audio_toggle_mute(&mut self) -> Result<(), bloop::abi::types::Error> {
+        self.require_audio()?;
+        self.audio.toggle_mute().map_err(Into::into)
+    }
+
+    fn device_list(&mut self) -> Vec<bloop::abi::devices::Device> {
+        if self.require_devices().is_err() {
+            return Vec::new();
+        }
+        self.devices.devices().iter().map(to_wit_device).collect()
     }
 
     fn media_play(&mut self, id: String) -> Result<bool, bloop::abi::types::Error> {
@@ -345,6 +412,38 @@ fn from_wit_repeat(mode: bloop::abi::media::RepeatMode) -> RepeatMode {
     }
 }
 
+fn to_wit_audio_device(device: &AudioDevice) -> bloop::abi::audio::AudioDevice {
+    bloop::abi::audio::AudioDevice {
+        id: device.id.clone(),
+        name: device.name.clone(),
+        active: device.active,
+        metadata: device
+            .metadata
+            .map(|metadata: AudioDeviceMetadata| bloop::abi::audio::AudioDeviceMetadata {
+                default: metadata.default,
+            }),
+    }
+}
+
+fn to_wit_device(device: &Device) -> bloop::abi::devices::Device {
+    bloop::abi::devices::Device {
+        id: device.id.clone(),
+        name: device.name.clone(),
+        kind: match device.kind {
+            DeviceKind::Headphones => bloop::abi::devices::DeviceKind::Headphones,
+            DeviceKind::Speaker => bloop::abi::devices::DeviceKind::Speaker,
+            DeviceKind::Keyboard => bloop::abi::devices::DeviceKind::Keyboard,
+            DeviceKind::Mouse => bloop::abi::devices::DeviceKind::Mouse,
+            DeviceKind::Controller => bloop::abi::devices::DeviceKind::Controller,
+            DeviceKind::Phone => bloop::abi::devices::DeviceKind::Phone,
+            DeviceKind::Other => bloop::abi::devices::DeviceKind::Other,
+        },
+        connected: device.connected,
+        paired: device.paired,
+        battery: device.battery,
+    }
+}
+
 impl From<EngineError> for bloop::abi::types::Error {
     fn from(error: EngineError) -> Self {
         match error {
@@ -383,7 +482,9 @@ pub fn spawn_activity_plugin(
     record: &PluginRecord,
     http: Arc<HttpService>,
     media: Arc<MediaService>,
-    watches: Arc<Mutex<HashMap<String, String>>>,
+    audio: Arc<AudioService>,
+    devices: Arc<DeviceService>,
+    watches: Arc<WatchRegistry>,
     storage: Arc<Mutex<NamespacedStore>>,
     settings: Arc<SettingsService>,
     activities: Arc<ActivityService>,
@@ -412,6 +513,8 @@ pub fn spawn_activity_plugin(
                 permissions,
                 http,
                 media,
+                audio,
+                devices,
                 watches,
                 storage,
                 settings,
@@ -466,7 +569,9 @@ fn run_plugin_loop(
     permissions: Permissions,
     http: Arc<HttpService>,
     media: Arc<MediaService>,
-    watches: Arc<Mutex<HashMap<String, String>>>,
+    audio: Arc<AudioService>,
+    devices: Arc<DeviceService>,
+    watches: Arc<WatchRegistry>,
     storage: Arc<Mutex<NamespacedStore>>,
     settings: Arc<SettingsService>,
     activities: Arc<ActivityService>,
@@ -494,6 +599,8 @@ fn run_plugin_loop(
             .build(),
         http,
         media,
+        audio,
+        devices,
         watches,
         storage,
         settings,

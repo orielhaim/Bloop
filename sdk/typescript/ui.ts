@@ -8,12 +8,20 @@ export function secondaryText(value: string): UiNode {
   return { kind: "secondaryText", text: value };
 }
 
+export function icon(name: string): UiNode {
+  return { kind: "icon", name };
+}
+
 export function artwork(src: string, alt = "Artwork"): UiNode {
   return { kind: "artwork", src, alt };
 }
 
-export function iconButton(id: string, icon: string, label: string): UiNode {
-  return { kind: "iconButton", id, icon, label };
+export function progress(value: number, max = 1): UiNode {
+  return { kind: "progress", value, max };
+}
+
+export function iconButton(id: string, iconName: string, label: string): UiNode {
+  return { kind: "iconButton", id, icon: iconName, label };
 }
 
 export function seekBar(
@@ -36,6 +44,8 @@ export function badge(value: string): UiNode {
   return { kind: "badge", text: value };
 }
 
+export type PreferredSize = "auto" | "compact" | "medium" | "wide";
+
 export function snapshot(input: {
   activityId: string;
   pluginId: string;
@@ -46,18 +56,23 @@ export function snapshot(input: {
   presentation?: UiNode | null;
   expanded?: UiNode | null;
   timestampMs: number;
+  lifetimeMs?: number | null;
+  coalescingKey?: string | null;
+  preferredSize?: PreferredSize | null;
 }) {
   return {
     activityId: input.activityId,
     pluginId: input.pluginId,
     priority: input.priority ?? 40,
     mode: input.mode ?? "compact",
-    lifetimeMs: null,
+    lifetimeMs: input.lifetimeMs ?? null,
     interruptible: true,
     compact: input.compact ?? null,
     peek: input.peek ?? null,
     presentation: input.presentation ?? null,
     expanded: input.expanded ?? null,
     timestampMs: input.timestampMs,
+    coalescingKey: input.coalescingKey ?? null,
+    preferredSize: input.preferredSize ?? null,
   };
 }

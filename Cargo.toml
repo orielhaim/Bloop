@@ -5,6 +5,8 @@ members = [
   "crates/bloop-core",
   "crates/bloop-sdk",
   "plugins/now-playing",
+  "plugins/volume",
+  "plugins/bluetooth",
   "xtask",
 ]
 

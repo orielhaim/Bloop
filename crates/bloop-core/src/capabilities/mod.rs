@@ -6,9 +6,17 @@ use serde::{Deserialize, Serialize};
 use crate::error::{EngineError, EngineResult};
 use crate::plugins::{Permissions, assert_network};
 
+pub mod audio;
+#[cfg(windows)]
+pub mod coreaudio;
+pub mod devices;
 pub mod gsmtc;
 pub mod media;
+#[cfg(windows)]
+pub mod winbluetooth;
 
+pub use audio::*;
+pub use devices::*;
 pub use media::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

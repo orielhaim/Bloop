@@ -268,7 +268,9 @@ function IslandPanel({
                 {plugins
                   .filter(
                     (plugin) =>
-                      plugin.enabled && plugin.manifest.provides.activity,
+                      plugin.enabled &&
+                      plugin.manifest.provides.activity &&
+                      plugin.manifest.provides.widget !== false,
                   )
                   .map((plugin) => (
                     <ComboboxItem key={plugin.id} value={`plugin:${plugin.id}`}>

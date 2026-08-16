@@ -13,8 +13,13 @@ pub struct Snapshot<'a> {
     pub peek: Option<serde_json::Value>,
     pub presentation: Option<serde_json::Value>,
     pub expanded: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<serde_json::Value>,
     pub timestamp_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coalescing_key: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred_size: Option<&'a str>,
 }
 
 pub fn ui_text(text: &str, variant: &str) -> serde_json::Value {
@@ -70,4 +75,12 @@ pub fn ui_grow() -> serde_json::Value {
 
 pub fn ui_waveform(active: bool) -> serde_json::Value {
     serde_json::json!({ "kind": "waveform", "active": active })
+}
+
+pub fn ui_icon(name: &str) -> serde_json::Value {
+    serde_json::json!({ "kind": "icon", "name": name })
+}
+
+pub fn ui_progress(value: f64, max: f64) -> serde_json::Value {
+    serde_json::json!({ "kind": "progress", "value": value, "max": max })
 }

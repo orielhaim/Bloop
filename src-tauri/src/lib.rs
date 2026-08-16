@@ -84,8 +84,9 @@ pub fn run() {
 
             thread::spawn(move || {
                 loop {
-                    thread::sleep(Duration::from_millis(250));
+                    thread::sleep(Duration::from_millis(100));
                     engine.activities.tick();
+                    engine.devices.tick(std::time::Instant::now());
                 }
             });
             Ok(())

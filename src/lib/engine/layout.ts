@@ -17,8 +17,18 @@ export function activityCatalog(
   activities: ActivitySnapshot[],
 ): CatalogItem[] {
   const items: CatalogItem[] = [];
+  // Utility plugins present transiently and never occupy a home widget.
+  const utilities = new Set(
+    plugins
+      .filter((plugin) => plugin.manifest?.provides?.widget === false)
+      .map((plugin) => plugin.id),
+  );
   for (const plugin of plugins) {
-    if (!plugin.manifest?.provides?.activity || plugin.enabled === false) {
+    if (
+      !plugin.manifest?.provides?.activity ||
+      plugin.enabled === false ||
+      utilities.has(plugin.id)
+    ) {
       continue;
     }
     const snapshot =
@@ -32,6 +42,9 @@ export function activityCatalog(
     });
   }
   for (const activity of activities) {
+    if (utilities.has(activity.pluginId)) {
+      continue;
+    }
     if (items.some((item) => item.pluginId === activity.pluginId)) {
       continue;
     }

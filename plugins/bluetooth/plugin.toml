@@ -1,0 +1,48 @@
+id = "bloop.activity.bluetooth"
+name = "Bluetooth"
+version = "1.0.0"
+api_version = "1"
+author = "Bloop"
+description = "Shows when Bluetooth devices connect or disconnect."
+entry = "component.wasm"
+enabled_by_default = true
+icon = "assets/icon.svg"
+
+[provides]
+activity = true
+theme = false
+widget = false
+
+[permissions]
+devices = true
+
+[[settings_schema]]
+type = "boolean"
+key = "showConnect"
+label = "Show connects"
+description = "Present the island when a device connects."
+default = true
+
+[[settings_schema]]
+type = "boolean"
+key = "showDisconnect"
+label = "Show disconnects"
+description = "Present the island when a device disconnects."
+default = true
+
+[[settings_schema]]
+type = "boolean"
+key = "showBattery"
+label = "Show battery when available"
+description = "Include the reported battery level when a device provides one."
+default = true
+
+[[settings_schema]]
+type = "slider"
+key = "durationMs"
+label = "Presentation duration"
+description = "How long device changes stay visible."
+min = 800.0
+max = 5000.0
+step = 100.0
+default = 1800.0
