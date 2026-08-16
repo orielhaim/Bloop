@@ -1,7 +1,6 @@
 import {
   ArrowLeftIcon,
   BluetoothIcon,
-  CheckIcon,
   GlobeIcon,
   HardDriveIcon,
   RadioIcon,
@@ -28,10 +27,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { engine } from "@/lib/engine";
-import type { AppSettings, PluginRecord } from "@/lib/engine/types";
+import type { PluginRecord } from "@/lib/engine/types";
 import { cn } from "@/lib/utils";
 import {
   isBuiltin,
@@ -40,19 +38,16 @@ import {
   type PluginKind,
   pluginKinds,
 } from "./kinds";
+import { PluginMark } from "./plugin-mark";
 
 type StoreShelf = "discover" | "library" | "updates";
 
 export function PluginStore({
   plugins,
-  settings,
   onChange,
-  onSave,
 }: {
   plugins: PluginRecord[];
-  settings: AppSettings;
   onChange: () => void;
-  onSave: (settings: AppSettings) => Promise<void>;
 }) {
   const [shelf, setShelf] = useState<StoreShelf>("discover");
   const [query, setQuery] = useState("");
@@ -75,10 +70,8 @@ export function PluginStore({
       <div className="min-h-0 flex-1 overflow-y-auto px-10 py-8">
         <PluginProduct
           plugin={open}
-          settings={settings}
           onBack={() => setOpenId(null)}
           onChange={onChange}
-          onSave={onSave}
         />
       </div>
     );
@@ -228,28 +221,13 @@ export function PluginStore({
 
 function PluginProduct({
   plugin,
-  settings,
   onBack,
   onChange,
-  onSave,
 }: {
   plugin: PluginRecord;
-  settings: AppSettings;
   onBack: () => void;
   onChange: () => void;
-  onSave: (settings: AppSettings) => Promise<void>;
 }) {
-  const schema = (plugin.manifest.settings_schema ?? []) as {
-    type: string;
-    key: string;
-    label: string;
-    description?: string | null;
-    default?: unknown;
-    min?: number;
-    max?: number;
-    step?: number;
-  }[];
-  const values = settings.pluginSettings[plugin.id] ?? {};
   const kinds = pluginKinds(plugin);
   const permissions = [
     plugin.manifest.permissions.media
@@ -397,98 +375,6 @@ function PluginProduct({
           </dl>
         </div>
       </section>
-      {plugin.enabled && schema.length > 0 ? (
-        <section className="rounded-2xl bg-card/70 p-5 ring-1 ring-foreground/8">
-          <p className="mb-4 text-sm font-medium">Plugin settings</p>
-          <div className="flex flex-col gap-4">
-            {schema.map((field) => (
-              <div
-                key={field.key}
-                className="flex items-center justify-between gap-4"
-              >
-                <div>
-                  <p className="text-sm">{field.label}</p>
-                  {field.description ? (
-                    <p className="text-xs text-muted-foreground">
-                      {field.description}
-                    </p>
-                  ) : null}
-                </div>
-                {field.type === "boolean" ? (
-                  <Switch
-                    checked={Boolean(values[field.key] ?? field.default)}
-                    onCheckedChange={(on) => {
-                      void onSave({
-                        ...settings,
-                        pluginSettings: {
-                          ...settings.pluginSettings,
-                          [plugin.id]: { ...values, [field.key]: on },
-                        },
-                      });
-                    }}
-                  />
-                ) : field.type === "slider" ? (
-                  <input
-                    type="range"
-                    min={field.min ?? 0}
-                    max={field.max ?? 100}
-                    step={field.step ?? 1}
-                    className="w-48 accent-foreground"
-                    value={Number(values[field.key] ?? field.default ?? 0)}
-                    onChange={(event) => {
-                      void onSave({
-                        ...settings,
-                        pluginSettings: {
-                          ...settings.pluginSettings,
-                          [plugin.id]: {
-                            ...values,
-                            [field.key]: Number(event.target.value),
-                          },
-                        },
-                      });
-                    }}
-                  />
-                ) : field.type === "number" ? (
-                  <Input
-                    type="number"
-                    className="max-w-48"
-                    value={String(values[field.key] ?? field.default ?? "")}
-                    onChange={(event) => {
-                      void onSave({
-                        ...settings,
-                        pluginSettings: {
-                          ...settings.pluginSettings,
-                          [plugin.id]: {
-                            ...values,
-                            [field.key]: Number(event.target.value),
-                          },
-                        },
-                      });
-                    }}
-                  />
-                ) : (
-                  <Input
-                    className="max-w-48"
-                    value={String(values[field.key] ?? field.default ?? "")}
-                    onChange={(event) => {
-                      void onSave({
-                        ...settings,
-                        pluginSettings: {
-                          ...settings.pluginSettings,
-                          [plugin.id]: {
-                            ...values,
-                            [field.key]: event.target.value,
-                          },
-                        },
-                      });
-                    }}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
     </div>
   );
 }
@@ -514,25 +400,5 @@ function ReloadButton({ onReload }: { onReload: () => Promise<unknown> }) {
     >
       <RefreshCwIcon className={cn("size-4", spinning && "animate-spin")} />
     </Button>
-  );
-}
-
-function PluginMark({
-  plugin,
-  className,
-}: {
-  plugin: PluginRecord;
-  className?: string;
-}) {
-  return (
-    <div
-      className={`flex items-center justify-center overflow-hidden rounded-2xl bg-zinc-800 ring-1 ring-white/10 ${className ?? "size-14"}`}
-    >
-      {plugin.iconUrl ? (
-        <img src={plugin.iconUrl} alt="" className="size-2/3 object-contain" />
-      ) : (
-        <CheckIcon className="size-6 text-zinc-500" />
-      )}
-    </div>
   );
 }

@@ -1,5 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { InfoIcon, PaletteIcon, Settings2Icon, StoreIcon } from "lucide-react";
+import {
+  BlocksIcon,
+  InfoIcon,
+  PaletteIcon,
+  Settings2Icon,
+  StoreIcon,
+} from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { applyTheme } from "@/animation/tokens";
 import { Button } from "@/components/ui/button";
@@ -38,9 +44,10 @@ import {
   type PluginRecord,
   type ThemeDocument,
 } from "@/lib/engine/types";
+import { PluginsPanel } from "./plugins";
 import { PluginStore } from "./store";
 
-type Section = "island" | "appearance" | "store" | "about";
+type Section = "island" | "appearance" | "plugins" | "store" | "about";
 
 export function SettingsApp() {
   const [section, setSection] = useState<Section>("island");
@@ -96,6 +103,7 @@ export function SettingsApp() {
           [
             ["island", "Island", Settings2Icon],
             ["appearance", "Appearance", PaletteIcon],
+            ["plugins", "Plugins", BlocksIcon],
             ["store", "Store", StoreIcon],
             ["about", "About", InfoIcon],
           ] as const
@@ -118,6 +126,18 @@ export function SettingsApp() {
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         {section === "store" ? (
           <PluginStore
+            plugins={plugins}
+            onChange={() => {
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.plugins,
+              });
+              void queryClient.invalidateQueries({
+                queryKey: queryKeys.themes,
+              });
+            }}
+          />
+        ) : section === "plugins" ? (
+          <PluginsPanel
             plugins={plugins}
             settings={settings}
             onChange={() => {
