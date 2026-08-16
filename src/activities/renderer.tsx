@@ -1,0 +1,334 @@
+import {
+  Pause,
+  Play,
+  Repeat,
+  Shuffle,
+  SkipBack,
+  SkipForward,
+} from "lucide-react";
+import { type CSSProperties, useEffect, useState } from "react";
+import { engine } from "@/lib/engine";
+import type { ActivitySnapshot, UiNode } from "@/lib/engine/types";
+import { cn } from "@/lib/utils";
+
+const icons = {
+  pause: Pause,
+  play: Play,
+  "skip-back": SkipBack,
+  "skip-forward": SkipForward,
+  shuffle: Shuffle,
+  repeat: Repeat,
+};
+
+export function ActivityView({
+  node,
+  snapshot,
+  onAction,
+}: {
+  node: UiNode;
+  snapshot: ActivitySnapshot;
+  onAction: (id: string, payload?: string) => void;
+}) {
+  return <Node node={node} snapshot={snapshot} onAction={onAction} />;
+}
+
+function Node({
+  node,
+  snapshot,
+  onAction,
+}: {
+  node: UiNode;
+  snapshot: ActivitySnapshot;
+  onAction: (id: string, payload?: string) => void;
+}) {
+  switch (node.kind) {
+    case "text":
+      return <span className={cn("ui-text", node.variant)}>{node.text}</span>;
+    case "secondaryText":
+      return <span className="ui-secondary">{node.text}</span>;
+    case "icon":
+      return <span className="ui-badge">{node.name}</span>;
+    case "badge":
+      return <span className="ui-badge">{node.text}</span>;
+    case "separator":
+      return <span className="ui-separator" />;
+    case "spacer":
+      return (
+        <span
+          className={cn("ui-spacer", node.grow && "grow")}
+          style={
+            node.grow
+              ? undefined
+              : { width: node.size ?? 8, height: node.size ?? 8 }
+          }
+        />
+      );
+    case "waveform":
+      return <Waveform active={Boolean(node.active)} />;
+    case "progress":
+      return (
+        <span className="ui-progress">
+          <span
+            className="ui-progress-fill"
+            style={{
+              width: `${Math.min(100, ((node.value ?? 0) / (node.max ?? 1)) * 100)}%`,
+            }}
+          />
+        </span>
+      );
+    case "seekBar":
+      return (
+        <SeekBar
+          positionMs={node.positionMs}
+          durationMs={node.durationMs}
+          timestampMs={snapshot.timestampMs}
+          playing={waveformActive(snapshot.expanded ?? snapshot.peek ?? node)}
+          onSeek={(position) =>
+            onAction(node.action, JSON.stringify({ positionMs: position }))
+          }
+        />
+      );
+    case "artwork":
+    case "image":
+      return <Artwork src={node.src} alt={"alt" in node ? node.alt : ""} />;
+    case "iconButton": {
+      const Icon = icons[node.icon as keyof typeof icons];
+      return (
+        <button
+          type="button"
+          className={cn("ui-icon-button", node.size)}
+          aria-label={node.label || node.icon}
+          onClick={(event) => {
+            event.stopPropagation();
+            onAction(node.id);
+          }}
+        >
+          {Icon ? (
+            <Icon size={node.size === "lg" ? 22 : 16} strokeWidth={1.75} />
+          ) : (
+            node.icon
+          )}
+        </button>
+      );
+    }
+    case "button":
+      return (
+        <button
+          type="button"
+          className="ui-button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onAction(node.id);
+          }}
+        >
+          {node.label}
+        </button>
+      );
+    case "toggle":
+      return (
+        <button
+          type="button"
+          className={cn("ui-toggle", node.on && "on")}
+          aria-pressed={node.on}
+          onClick={(event) => {
+            event.stopPropagation();
+            onAction(node.id, String(!node.on));
+          }}
+        >
+          {node.label}
+        </button>
+      );
+    case "row":
+      return (
+        <div
+          className={cn("ui-row", node.align)}
+          style={{ gap: node.gap ?? 8 }}
+        >
+          {(node.children ?? []).map((child, index) => (
+            <Node
+              key={index}
+              node={child}
+              snapshot={snapshot}
+              onAction={onAction}
+            />
+          ))}
+        </div>
+      );
+    case "column":
+      return (
+        <div className="ui-column" style={{ gap: node.gap ?? 8 }}>
+          {(node.children ?? []).map((child, index) => (
+            <Node
+              key={index}
+              node={child}
+              snapshot={snapshot}
+              onAction={onAction}
+            />
+          ))}
+        </div>
+      );
+    case "stack":
+      return (
+        <div className="ui-stack">
+          {(node.children ?? []).map((child, index) => (
+            <Node
+              key={index}
+              node={child}
+              snapshot={snapshot}
+              onAction={onAction}
+            />
+          ))}
+        </div>
+      );
+    default:
+      return null;
+  }
+}
+
+function Waveform({ active }: { active: boolean }) {
+  return (
+    <div className={cn("waveform", active && "is-active")} aria-hidden>
+      {[0.45, 0.9, 0.6, 1, 0.7].map((level) => (
+        <span
+          key={level}
+          className="waveform-bar"
+          style={{ "--level": level } as CSSProperties}
+        />
+      ))}
+    </div>
+  );
+}
+
+const artworkCache = new Map<string, string>();
+
+function Artwork({ src, alt }: { src: string; alt?: string }) {
+  const [resolved, setResolved] = useState<string | null>(() => {
+    if (!src.startsWith("media:")) {
+      return src;
+    }
+    return artworkCache.get(src) ?? null;
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!src.startsWith("media:")) {
+      setResolved(src);
+      return;
+    }
+    const cached = artworkCache.get(src);
+    if (cached) {
+      setResolved(cached);
+      return;
+    }
+    const sessionId = src.slice("media:".length).split("::")[0] ?? "";
+    void engine.media.artwork(sessionId).then((url) => {
+      if (url) {
+        artworkCache.set(src, url);
+      }
+      if (!cancelled) {
+        setResolved(url);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  if (!resolved) {
+    return <span className="ui-art fallback" />;
+  }
+  return (
+    <img className="ui-art" src={resolved} alt={alt || ""} draggable={false} />
+  );
+}
+
+function SeekBar({
+  positionMs,
+  durationMs,
+  timestampMs,
+  playing,
+  onSeek,
+}: {
+  positionMs: number;
+  durationMs: number;
+  timestampMs: number;
+  playing: boolean;
+  onSeek: (position: number) => void;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, []);
+  const elapsed = playing ? Math.max(0, now - timestampMs) : 0;
+  const current = Math.min(durationMs, positionMs + elapsed);
+  const remaining = Math.max(0, durationMs - current);
+  const percent = durationMs === 0 ? 0 : (current / durationMs) * 100;
+
+  return (
+    <div className="ui-seek-row">
+      <span className="ui-time">{formatClock(current)}</span>
+      <button
+        type="button"
+        className="ui-seek"
+        aria-label="Seek"
+        onClick={(event) => {
+          event.stopPropagation();
+          const rect = event.currentTarget.getBoundingClientRect();
+          const ratio = Math.min(
+            1,
+            Math.max(0, (event.clientX - rect.left) / rect.width),
+          );
+          onSeek(Math.round(ratio * durationMs));
+        }}
+      >
+        <span className="ui-seek-fill" style={{ width: `${percent}%` }} />
+      </button>
+      <span className="ui-time">-{formatClock(remaining)}</span>
+    </div>
+  );
+}
+
+function formatClock(ms: number) {
+  const total = Math.floor(ms / 1000);
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function waveformActive(node: UiNode | null | undefined): boolean {
+  if (!node) {
+    return false;
+  }
+  if (node.kind === "waveform") {
+    return Boolean(node.active);
+  }
+  if ("children" in node) {
+    return (node.children ?? []).some((child) => waveformActive(child));
+  }
+  return false;
+}
+
+export function nodeForPresence(
+  snapshot: ActivitySnapshot | null,
+  presence:
+    | ActivitySnapshot["mode"]
+    | "resting"
+    | "expanded"
+    | "peek"
+    | "presentation",
+) {
+  if (!snapshot) {
+    return null;
+  }
+  if (presence === "expanded") {
+    return snapshot.expanded ?? snapshot.peek ?? snapshot.compact;
+  }
+  if (presence === "presentation") {
+    return snapshot.presentation ?? snapshot.peek ?? snapshot.compact;
+  }
+  if (presence === "peek") {
+    return snapshot.peek ?? snapshot.compact;
+  }
+  return snapshot.compact ?? snapshot.peek;
+}

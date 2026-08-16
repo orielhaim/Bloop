@@ -1,0 +1,11 @@
+id = "bloop.theme.volt"
+name = "Volt"
+version = "1.0.0"
+api_version = "1"
+author = "Bloop"
+description = "Warm graphite with an amber pulse."
+enabled_by_default = false
+
+[provides]
+activity = false
+theme = true

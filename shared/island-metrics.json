@@ -1,0 +1,7 @@
+{
+  "resting": { "width": 128, "height": 32, "radius": 16 },
+  "peek": { "width": 220, "height": 56, "radius": 20 },
+  "presentation": { "width": 332, "height": 72, "radius": 24 },
+  "expanded": { "width": 360, "height": 292, "radius": 28 },
+  "window": { "width": 560, "height": 520, "radius": 28 }
+}

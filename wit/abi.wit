@@ -1,0 +1,128 @@
+package bloop:abi@1.0.0;
+
+interface types {
+  variant error {
+    permission(string),
+    network(string),
+    configuration(string),
+    compatibility(string),
+    runtime(string),
+    unsupported(string),
+  }
+
+  record http-header {
+    name: string,
+    value: string,
+  }
+
+  record http-request {
+    method: string,
+    url: string,
+    headers: list<http-header>,
+    body: option<list<u8>>,
+    timeout-ms: option<u32>,
+  }
+
+  record http-response {
+    status: u16,
+    headers: list<http-header>,
+    body: list<u8>,
+  }
+}
+
+interface media {
+  use types.{error};
+
+  enum playback-state {
+    closed,
+    opened,
+    changing,
+    stopped,
+    playing,
+    paused,
+  }
+
+  enum repeat-mode {
+    none,
+    track,
+    playlist,
+  }
+
+  record media-controls {
+    play: bool,
+    pause: bool,
+    stop: bool,
+    previous: bool,
+    next: bool,
+    seek: bool,
+    shuffle: bool,
+    repeat: bool,
+    playback-rate: bool,
+  }
+
+  record media-session {
+    id: string,
+    app-id: string,
+    app-name: string,
+    title: string,
+    artist: string,
+    album: string,
+    state: playback-state,
+    position-ms: u64,
+    duration-ms: u64,
+    last-updated-ms: u64,
+    playback-rate: f64,
+    shuffle: option<bool>,
+    repeat: repeat-mode,
+    controls: media-controls,
+    has-artwork: bool,
+  }
+}
+
+interface host {
+  use types.{error, http-request, http-response};
+  use media.{media-session, repeat-mode};
+
+  log: func(level: string, message: string);
+  now-ms: func() -> u64;
+  http: func(request: http-request) -> result<http-response, error>;
+  storage-get: func(key: string) -> option<string>;
+  storage-set: func(key: string, value: string) -> result<_, error>;
+  storage-delete: func(key: string) -> result<_, error>;
+  storage-list: func() -> list<string>;
+  publish: func(snapshot-json: string) -> result<_, error>;
+  dismiss: func(activity-id: string) -> result<_, error>;
+  set-timer: func(id: string, interval-ms: u32);
+  clear-timer: func(id: string);
+  get-setting: func(key: string) -> option<string>;
+  media-sessions: func() -> list<media-session>;
+  get-session: func(id: string) -> option<media-session>;
+  media-current: func() -> option<media-session>;
+  media-find: func(query: string) -> option<media-session>;
+  media-watch: func(query: string) -> result<_, error>;
+  media-unwatch: func();
+  media-play: func(id: string) -> result<bool, error>;
+  media-pause: func(id: string) -> result<bool, error>;
+  media-toggle: func(id: string) -> result<bool, error>;
+  media-stop: func(id: string) -> result<bool, error>;
+  media-next: func(id: string) -> result<bool, error>;
+  media-previous: func(id: string) -> result<bool, error>;
+  media-seek: func(id: string, position-ms: u64) -> result<bool, error>;
+  media-set-shuffle: func(id: string, on: bool) -> result<bool, error>;
+  media-set-repeat: func(id: string, mode: repeat-mode) -> result<bool, error>;
+  media-set-rate: func(id: string, rate: f64) -> result<bool, error>;
+}
+
+interface activity {
+  initialize: func() -> result<_, string>;
+  on-action: func(action-id: string, payload-json: string) -> result<_, string>;
+  on-timer: func(timer-id: string) -> result<_, string>;
+  on-event: func(topic: string, payload-json: string) -> result<_, string>;
+  on-settings-changed: func() -> result<_, string>;
+  shutdown: func();
+}
+
+world activity-plugin {
+  import host;
+  export activity;
+}

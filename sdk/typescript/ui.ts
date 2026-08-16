@@ -1,0 +1,63 @@
+export type UiNode = Record<string, unknown>;
+
+export function text(value: string, variant = "body"): UiNode {
+  return { kind: "text", text: value, variant };
+}
+
+export function secondaryText(value: string): UiNode {
+  return { kind: "secondaryText", text: value };
+}
+
+export function artwork(src: string, alt = "Artwork"): UiNode {
+  return { kind: "artwork", src, alt };
+}
+
+export function iconButton(id: string, icon: string, label: string): UiNode {
+  return { kind: "iconButton", id, icon, label };
+}
+
+export function seekBar(
+  positionMs: number,
+  durationMs: number,
+  action = "seek",
+): UiNode {
+  return { kind: "seekBar", positionMs, durationMs, action };
+}
+
+export function row(children: UiNode[], gap = 8): UiNode {
+  return { kind: "row", children, gap, align: "center" };
+}
+
+export function column(children: UiNode[], gap = 8): UiNode {
+  return { kind: "column", children, gap };
+}
+
+export function badge(value: string): UiNode {
+  return { kind: "badge", text: value };
+}
+
+export function snapshot(input: {
+  activityId: string;
+  pluginId: string;
+  priority?: number;
+  mode?: string;
+  compact?: UiNode | null;
+  peek?: UiNode | null;
+  presentation?: UiNode | null;
+  expanded?: UiNode | null;
+  timestampMs: number;
+}) {
+  return {
+    activityId: input.activityId,
+    pluginId: input.pluginId,
+    priority: input.priority ?? 40,
+    mode: input.mode ?? "compact",
+    lifetimeMs: null,
+    interruptible: true,
+    compact: input.compact ?? null,
+    peek: input.peek ?? null,
+    presentation: input.presentation ?? null,
+    expanded: input.expanded ?? null,
+    timestampMs: input.timestampMs,
+  };
+}

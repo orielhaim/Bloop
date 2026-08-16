@@ -1,0 +1,24 @@
+id = "bloop.activity.now-playing"
+name = "Now Playing"
+version = "1.0.0"
+api_version = "1"
+author = "Bloop"
+description = "Shows whatever media is playing from any app."
+entry = "component.wasm"
+enabled_by_default = true
+icon = "assets/icon.svg"
+
+[provides]
+activity = true
+theme = false
+
+[permissions]
+media = true
+storage = false
+
+[[settings_schema]]
+type = "boolean"
+key = "showIdle"
+label = "Show when nothing is playing"
+description = "Keep a compact Now Playing activity visible when no track is playing."
+default = false

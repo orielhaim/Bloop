@@ -1,0 +1,11 @@
+id = "bloop.theme.obsidian"
+name = "Obsidian"
+version = "1.0.0"
+api_version = "1"
+author = "Bloop"
+description = "Built-in dark glass baseline."
+enabled_by_default = true
+
+[provides]
+activity = false
+theme = true

@@ -1,0 +1,13 @@
+id = "bloop.activity.pulse"
+name = "Pulse"
+version = "1.0.0"
+api_version = "1"
+author = "Bloop"
+description = "WAT smoke plugin that publishes a compact heartbeat."
+entry = "component.wasm"
+enabled_by_default = false
+icon = "assets/icon.svg"
+
+[provides]
+activity = true
+theme = false

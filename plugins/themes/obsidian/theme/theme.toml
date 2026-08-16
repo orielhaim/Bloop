@@ -1,0 +1,49 @@
+id = "bloop.theme.obsidian"
+name = "Obsidian"
+description = "Dense black glass with a teal live accent."
+
+[tokens]
+shell = "#0a0a0a"
+foreground = "#f4f4f5"
+muted = "#a1a1aa"
+accent = "#5eead4"
+surface = "#18181b"
+opacity = 1.0
+blur = 0.0
+border = "transparent"
+shadow = "0 18px 40px rgb(0 0 0 / 35%)"
+radius = 28.0
+
+[motion.peek]
+stiffness = 680.0
+damping = 38.0
+mass = 0.55
+
+[motion.expand]
+stiffness = 420.0
+damping = 30.0
+mass = 0.72
+
+[motion.collapse]
+stiffness = 580.0
+damping = 40.0
+mass = 0.52
+
+[motion]
+contentEnterMs = 160
+contentExitMs = 120
+
+[motion.page]
+stiffness = 380.0
+damping = 36.0
+mass = 0.7
+
+[motion.drag]
+stiffness = 500.0
+damping = 32.0
+mass = 0.6
+
+[motion.activitySwitch]
+stiffness = 460.0
+damping = 34.0
+mass = 0.62

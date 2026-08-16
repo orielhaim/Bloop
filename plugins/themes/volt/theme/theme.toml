@@ -1,0 +1,49 @@
+id = "bloop.theme.volt"
+name = "Volt"
+description = "Warm graphite shell with amber highlights."
+
+[tokens]
+shell = "#16110c"
+foreground = "#fff7ed"
+muted = "#c4b5a5"
+accent = "#fbbf24"
+surface = "#241c14"
+opacity = 1.0
+blur = 0.0
+border = "transparent"
+shadow = "0 18px 40px rgb(40 20 0 / 40%)"
+radius = 26.0
+
+[motion.peek]
+stiffness = 640.0
+damping = 34.0
+mass = 0.58
+
+[motion.expand]
+stiffness = 390.0
+damping = 28.0
+mass = 0.76
+
+[motion.collapse]
+stiffness = 620.0
+damping = 42.0
+mass = 0.5
+
+[motion]
+contentEnterMs = 170
+contentExitMs = 110
+
+[motion.page]
+stiffness = 360.0
+damping = 34.0
+mass = 0.72
+
+[motion.drag]
+stiffness = 480.0
+damping = 30.0
+mass = 0.62
+
+[motion.activitySwitch]
+stiffness = 430.0
+damping = 32.0
+mass = 0.64
