@@ -1,10 +1,10 @@
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  activitiesFromEnabledPlugins,
-  occupiesIslandFace,
-  retainOccupant,
-} from "@/idle/face";
+import { semanticsFromSnapshot } from "@/composition/adapter";
+import { computeBudget } from "@/composition/budget";
+import { type SolveOutput, solve } from "@/composition/engine";
+import { type CompositionMemory, emptyMemory } from "@/composition/types";
+import { activitiesFromEnabledPlugins } from "@/idle/face";
 import { engine } from "@/lib/engine";
 import {
   activityCatalog,
@@ -21,10 +21,11 @@ import {
   type Presence,
   type ThemeDocument,
 } from "@/lib/engine/types";
+import { islandWindow } from "./metrics";
 
 function resolvePresence(
   state: IslandState | null,
-  occupant: IslandState["activity"],
+  composition: SolveOutput,
   stickyHover: boolean,
   opened: boolean,
   idleKind: AppSettings["idleProvider"]["kind"],
@@ -32,19 +33,13 @@ function resolvePresence(
   if (opened || state?.sticky || state?.presence === "expanded") {
     return "expanded";
   }
-  if (!state) {
-    return stickyHover && idleKind !== "none" ? "peek" : "resting";
-  }
-  if (state.presence === "presentation" || occupant?.mode === "presentation") {
+  if (composition.composition.faceMode === "takeover") {
     return "presentation";
   }
-  if (occupiesIslandFace(occupant)) {
+  if (composition.composition.faceMode === "resident") {
     return "peek";
   }
-  if (stickyHover && idleKind !== "none") {
-    return "peek";
-  }
-  return "resting";
+  return stickyHover && idleKind !== "none" ? "peek" : "resting";
 }
 
 export function useIsland() {
@@ -56,9 +51,13 @@ export function useIsland() {
   const [customizing, setCustomizing] = useState(false);
   const [opened, setOpened] = useState(false);
   const [plugins, setPlugins] = useState<PluginRecord[]>([]);
+  const [tick, setTick] = useState(0);
 
-  const occupantRef = useRef<IslandState["activity"]>(null);
   const refreshGen = useRef(0);
+  // Composition continuity memory persists across solves.
+  const memoryRef = useRef<CompositionMemory>(emptyMemory());
+  // Interaction recency: activityId -> wall time of last user interaction.
+  const interactionRef = useRef<Record<string, number>>({});
 
   const refresh = useCallback(async () => {
     const gen = ++refreshGen.current;
@@ -153,35 +152,63 @@ export function useIsland() {
     () => activitiesFromEnabledPlugins(state?.activities ?? [], plugins),
     [plugins, state?.activities],
   );
-  const liveCurrent = useMemo(() => {
-    const current = state?.activity ?? null;
-    if (!current) {
-      return null;
-    }
-    return liveActivities.some(
-      (activity) => activity.activityId === current.activityId,
-    )
-      ? current
-      : null;
-  }, [liveActivities, state?.activity]);
 
-  const occupant = retainOccupant(
-    occupantRef.current,
-    liveCurrent,
-    liveActivities,
+  // Re-solve composition over time only when an Activity has a deadline whose
+  // urgency evolves (a running countdown). Otherwise the solver is only run on
+  // real state changes — the system stays effectively idle.
+  const hasDeadline = liveActivities.some(
+    (activity) =>
+      activity.deadlineMs != null &&
+      activity.attention?.urgencyWindowMs != null,
   );
-  occupantRef.current = occupant;
+  useEffect(() => {
+    if (!hasDeadline) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      // Force the composition memo to recompute with a fresh `now`.
+      setTick((value) => value + 1);
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [hasDeadline]);
+
+  /** Mark an Activity as recently interacted; temporarily boosts its value. */
+  const markInteraction = useCallback(
+    (activityId: string) => {
+      interactionRef.current[activityId] = Date.now();
+      void refresh();
+    },
+    [refresh],
+  );
+
+  const composition = useMemo<SolveOutput>(() => {
+    const budget = computeBudget({
+      windowWidth: islandWindow.width,
+      dpr: window.devicePixelRatio || 1,
+      preference: settings.composition ?? "auto",
+    });
+    const semantics = liveActivities.map(semanticsFromSnapshot);
+    const now = tick >= 0 ? Date.now() : Date.now();
+    const result = solve({
+      activities: semantics,
+      budget,
+      now,
+      memory: memoryRef.current,
+    });
+    memoryRef.current = result.memory;
+    return result;
+  }, [liveActivities, settings.composition, tick]);
 
   const presence = useMemo(
     () =>
       resolvePresence(
         state,
-        occupant,
+        composition,
         stickyHover,
         opened,
         settings.idleProvider.kind,
       ),
-    [occupant, opened, settings.idleProvider.kind, state, stickyHover],
+    [composition, opened, settings.idleProvider.kind, state, stickyHover],
   );
 
   const open = useCallback(() => {
@@ -203,10 +230,8 @@ export function useIsland() {
 
   return {
     presence,
-    occupant,
-    state: state
-      ? { ...state, activity: liveCurrent, activities: liveActivities }
-      : state,
+    composition,
+    state,
     settings,
     theme,
     catalog,
@@ -215,5 +240,6 @@ export function useIsland() {
     open,
     updateLayout,
     refresh,
+    markInteraction,
   };
 }

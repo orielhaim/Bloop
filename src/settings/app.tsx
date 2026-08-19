@@ -44,13 +44,17 @@ import {
   type PluginRecord,
   type ThemeDocument,
 } from "@/lib/engine/types";
-import { PluginsPanel } from "./plugins";
+import { cn } from "@/lib/utils";
+import { sortPlugins } from "./kinds";
+import { PluginMark } from "./plugin-mark";
+import { PluginSettings } from "./plugins";
 import { PluginStore } from "./store";
 
 type Section = "island" | "appearance" | "plugins" | "store" | "about";
 
 export function SettingsApp() {
   const [section, setSection] = useState<Section>("island");
+  const [pluginId, setPluginId] = useState<string | null>(null);
   const [updateMessage, setUpdateMessage] = useState("Not checked yet.");
   const queryClient = useQueryClient();
 
@@ -64,6 +68,10 @@ export function SettingsApp() {
   const plugins = pluginsQuery.data ?? [];
   const themes = themesQuery.data ?? [];
   const monitors = monitorsQuery.data ?? [];
+
+  const sidebarPlugins = useMemo(() => sortPlugins(plugins), [plugins]);
+  const selectedPlugin =
+    plugins.find((plugin) => plugin.id === pluginId) ?? null;
 
   const activeTheme = useMemo(() => {
     const visible = visibleThemes(themes, plugins);
@@ -91,6 +99,11 @@ export function SettingsApp() {
     await queryClient.invalidateQueries({ queryKey: queryKeys.plugins });
   };
 
+  const select = (id: Section) => {
+    setSection(id);
+    setPluginId(null);
+  };
+
   const appearanceThemes = useMemo(
     () => visibleThemes(themes, plugins),
     [plugins, themes],
@@ -98,30 +111,67 @@ export function SettingsApp() {
 
   return (
     <div className="flex h-full min-h-0 bg-[#0b0b0d] text-zinc-100">
-      <nav className="flex h-full w-56 shrink-0 flex-col gap-1 border-r border-white/6 bg-black/40 p-4">
-        {(
-          [
-            ["island", "Island", Settings2Icon],
-            ["appearance", "Appearance", PaletteIcon],
-            ["plugins", "Plugins", BlocksIcon],
-            ["store", "Store", StoreIcon],
-            ["about", "About", InfoIcon],
-          ] as const
-        ).map(([id, label, Icon]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setSection(id)}
-            className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
-              section === id
-                ? "bg-white/10 text-white"
-                : "text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
-            }`}
+      <nav className="flex h-full w-56 shrink-0 flex-col border-r border-white/6 bg-black/40">
+        <div className="flex shrink-0 flex-col gap-1 p-4 pb-2">
+          <NavButton
+            active={section === "island"}
+            onClick={() => select("island")}
+            icon={<Settings2Icon className="size-4" />}
+            label="Island"
+          />
+          <NavButton
+            active={section === "appearance"}
+            onClick={() => select("appearance")}
+            icon={<PaletteIcon className="size-4" />}
+            label="Appearance"
+          />
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-2">
+          <p
+            className={cn(
+              "px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wider",
+              section === "plugins" ? "text-zinc-300" : "text-zinc-500",
+            )}
           >
-            <Icon className="size-4" />
-            {label}
-          </button>
-        ))}
+            Plugins
+          </p>
+          <div className="flex flex-col gap-1">
+            {sidebarPlugins.map((plugin) => (
+              <button
+                key={plugin.id}
+                type="button"
+                onClick={() => {
+                  setSection("plugins");
+                  setPluginId(plugin.id);
+                }}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                  section === "plugins" && pluginId === plugin.id
+                    ? "bg-white/10 text-white"
+                    : "text-zinc-400 hover:bg-white/5 hover:text-zinc-200",
+                  !plugin.enabled && "opacity-50",
+                )}
+              >
+                <PluginMark plugin={plugin} className="size-7" />
+                <span className="truncate">{plugin.manifest.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col gap-1 p-4 pt-2">
+          <NavButton
+            active={section === "store"}
+            onClick={() => select("store")}
+            icon={<StoreIcon className="size-4" />}
+            label="Store"
+          />
+          <NavButton
+            active={section === "about"}
+            onClick={() => select("about")}
+            icon={<InfoIcon className="size-4" />}
+            label="About"
+          />
+        </div>
       </nav>
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         {section === "store" ? (
@@ -137,19 +187,48 @@ export function SettingsApp() {
             }}
           />
         ) : section === "plugins" ? (
-          <PluginsPanel
-            plugins={plugins}
-            settings={settings}
-            onChange={() => {
-              void queryClient.invalidateQueries({
-                queryKey: queryKeys.plugins,
-              });
-              void queryClient.invalidateQueries({
-                queryKey: queryKeys.themes,
-              });
-            }}
-            onSave={save}
-          />
+          <div className="min-h-0 flex-1 overflow-y-auto px-10 py-8">
+            <div className="mx-auto flex max-w-3xl flex-col gap-8">
+              {selectedPlugin ? (
+                <PluginSettings
+                  plugin={selectedPlugin}
+                  settings={settings}
+                  onChange={() => {
+                    void queryClient.invalidateQueries({
+                      queryKey: queryKeys.plugins,
+                    });
+                    void queryClient.invalidateQueries({
+                      queryKey: queryKeys.themes,
+                    });
+                  }}
+                  onSave={save}
+                />
+              ) : (
+                <div className="flex flex-col items-center py-24 text-center">
+                  <BlocksIcon className="size-10 text-zinc-600" />
+                  <p className="mt-3 text-sm font-medium text-zinc-300">
+                    {plugins.length === 0
+                      ? "No plugins installed"
+                      : "No plugin selected"}
+                  </p>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    {plugins.length === 0
+                      ? "Browse the Store to add some."
+                      : "Choose a plugin from the sidebar to adjust its settings."}
+                  </p>
+                  {plugins.length === 0 ? (
+                    <Button
+                      variant="outline"
+                      className="mt-4"
+                      onClick={() => select("store")}
+                    >
+                      Open Store
+                    </Button>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto px-10 py-10">
             {section === "island" ? (
@@ -210,6 +289,7 @@ function IslandPanel({
   monitors: MonitorInfo[];
   onSave: (settings: AppSettings) => Promise<void>;
 }) {
+  const clock = settings.clock ?? fallbackSettings.clock;
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-10">
       <header>
@@ -312,6 +392,46 @@ function IslandPanel({
               </ComboboxList>
             </ComboboxContent>
           </Combobox>
+        </Row>
+        <Row
+          label="Clock seconds"
+          hint="Show hours:minutes:seconds on the idle clock."
+        >
+          <Switch
+            checked={clock.showSeconds}
+            onCheckedChange={(showSeconds) =>
+              onSave({
+                ...settings,
+                clock: { ...clock, showSeconds },
+              })
+            }
+          />
+        </Row>
+        <Row
+          label="Clock motion"
+          hint="Tick rolls each digit. Smooth crossfades the time."
+        >
+          <Select
+            value={clock.motion}
+            onValueChange={(value) =>
+              void onSave({
+                ...settings,
+                clock: {
+                  ...clock,
+                  motion: value === "smooth" ? "smooth" : "tick",
+                },
+              })
+            }
+            className="w-40"
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Motion" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="tick">Tick</SelectItem>
+              <SelectItem value="smooth">Smooth</SelectItem>
+            </SelectContent>
+          </Select>
         </Row>
       </section>
       <section className="flex flex-col gap-1 overflow-visible rounded-2xl bg-white/3 ring-1 ring-white/6">
@@ -416,6 +536,32 @@ function AppearancePanel({
           />
         </Row>
       </section>
+      <section className="flex flex-col gap-1 overflow-visible rounded-2xl bg-white/3 ring-1 ring-white/6">
+        <Row
+          label="Island information"
+          hint="How much the island shows at once. The engine still decides what is relevant."
+        >
+          <Select
+            value={settings.composition ?? "auto"}
+            onValueChange={(value) =>
+              onSave({
+                ...settings,
+                composition: (value as "auto" | "minimal" | "rich") ?? "auto",
+              })
+            }
+            className="w-48"
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Automatic" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Automatic</SelectItem>
+              <SelectItem value="minimal">Less information</SelectItem>
+              <SelectItem value="rich">More information</SelectItem>
+            </SelectContent>
+          </Select>
+        </Row>
+      </section>
     </div>
   );
 }
@@ -469,6 +615,34 @@ function idleFromSelect(value: string): IdleProvider {
     return { kind: "plugin", id: value.slice(7) };
   }
   return { kind: "clock" };
+}
+
+function NavButton({
+  active,
+  onClick,
+  icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+        active
+          ? "bg-white/10 text-white"
+          : "text-zinc-400 hover:bg-white/5 hover:text-zinc-200",
+      )}
+    >
+      {icon}
+      {label}
+    </button>
+  );
 }
 
 function Row({

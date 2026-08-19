@@ -1,25 +1,25 @@
 export const restingIsland = {
-  width: 128,
-  height: 32,
-  radius: 16,
+  width: 152,
+  height: 36,
+  radius: 14,
 } as const;
 
 export const peekIsland = {
   width: 220,
   height: 56,
-  radius: 20,
+  radius: 18,
 } as const;
 
 export const presentationIsland = {
-  width: 332,
-  height: 72,
-  radius: 24,
+  width: 220,
+  height: 42,
+  radius: 16,
 } as const;
 
 export const expandedIsland = {
   width: 360,
-  height: 292,
-  radius: 28,
+  height: 168,
+  radius: 24,
 } as const;
 
 export const islandWindow = {

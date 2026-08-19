@@ -1,6 +1,4 @@
-import { ArrowLeftIcon, ChevronRightIcon } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
+import type { ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { engine } from "@/lib/engine";
@@ -20,91 +18,7 @@ type SettingsField = {
   step?: number;
 };
 
-export function PluginsPanel({
-  plugins,
-  settings,
-  onChange,
-  onSave,
-}: {
-  plugins: PluginRecord[];
-  settings: AppSettings;
-  onChange: () => void;
-  onSave: (settings: AppSettings) => Promise<void>;
-}) {
-  const [openId, setOpenId] = useState<string | null>(null);
-  const open = plugins.find((plugin) => plugin.id === openId) ?? null;
-
-  const sorted = useMemo(() => {
-    const byName = (left: PluginRecord, right: PluginRecord) =>
-      left.manifest.name.localeCompare(right.manifest.name);
-    return [
-      ...plugins.filter((plugin) => plugin.enabled).sort(byName),
-      ...plugins.filter((plugin) => !plugin.enabled).sort(byName),
-    ];
-  }, [plugins]);
-
-  if (open) {
-    return (
-      <div className="min-h-0 flex-1 overflow-y-auto px-10 py-8">
-        <div className="mx-auto flex max-w-3xl flex-col gap-8">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-fit"
-            onClick={() => setOpenId(null)}
-          >
-            <ArrowLeftIcon data-icon="inline-start" />
-            Plugins
-          </Button>
-          <PluginSettings
-            plugin={open}
-            settings={settings}
-            onChange={onChange}
-            onSave={onSave}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-10 py-10">
-      <header>
-        <h1 className="font-heading mt-1 text-3xl tracking-tight">Plugins</h1>
-        <p className="mt-2 text-sm text-zinc-500">
-          Installed plugins that extend Bloop. Choose one to adjust its
-          settings.
-        </p>
-      </header>
-      <div className="flex flex-col gap-1 overflow-hidden rounded-2xl bg-white/3 ring-1 ring-white/6">
-        {sorted.map((plugin) => (
-          <button
-            key={plugin.id}
-            type="button"
-            onClick={() => setOpenId(plugin.id)}
-            className={cn(
-              "group flex items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-white/5",
-              !plugin.enabled && "opacity-50",
-            )}
-          >
-            <PluginMark plugin={plugin} className="size-10" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">
-                {plugin.manifest.name}
-              </span>
-              <span className="block truncate text-xs text-zinc-500">
-                {pluginKinds(plugin).map(kindLabel).join(" · ") || "Plugin"}
-              </span>
-            </span>
-            <ChevronRightIcon className="size-4 shrink-0 text-zinc-600 transition-transform group-hover:translate-x-0.5" />
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PluginSettings({
+export function PluginSettings({
   plugin,
   settings,
   onChange,

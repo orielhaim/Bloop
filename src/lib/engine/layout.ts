@@ -32,7 +32,17 @@ export function activityCatalog(
       continue;
     }
     const snapshot =
-      activities.find((activity) => activity.pluginId === plugin.id) ?? null;
+      activities.find((activity) => activity.pluginId === plugin.id) ??
+      activities.find((activity) => activity.activityId === plugin.id) ??
+      activities.find((activity) =>
+        activity.activityId.startsWith(`${plugin.id}.`),
+      ) ??
+      activities.find(
+        (activity) =>
+          plugin.id.endsWith(`.${activity.activityId}`) ||
+          activity.pluginId.endsWith(`.${plugin.id}`),
+      ) ??
+      null;
     items.push({
       id: plugin.id,
       pluginId: plugin.id,
@@ -116,9 +126,28 @@ export function catalogItem(
 }
 
 export function sameActivity(left: string, right: string): boolean {
-  return (
-    left === right ||
-    left.startsWith(`${right}.`) ||
-    right.startsWith(`${left}.`)
-  );
+  if (left === right) {
+    return true;
+  }
+  if (left.startsWith(`${right}.`) || right.startsWith(`${left}.`)) {
+    return true;
+  }
+  const leftTail = left.includes(".")
+    ? left.slice(left.lastIndexOf(".") + 1)
+    : left;
+  const rightTail = right.includes(".")
+    ? right.slice(right.lastIndexOf(".") + 1)
+    : right;
+  return leftTail === rightTail;
+}
+
+export function canonicalId(catalog: CatalogItem[], id: string): string {
+  return catalogItem(catalog, id)?.id ?? id;
+}
+
+export function canonicalItems(
+  layout: HomeLayout,
+  catalog: CatalogItem[],
+): string[] {
+  return placedItems(layout).map((id) => canonicalId(catalog, id));
 }

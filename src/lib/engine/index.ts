@@ -68,6 +68,7 @@ export const engine = {
       return {
         ...fallbackSettings,
         ...settings,
+        clock: { ...fallbackSettings.clock, ...settings.clock },
         layout: normalizeLayout(settings.layout),
       };
     },

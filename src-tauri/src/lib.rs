@@ -118,11 +118,15 @@ pub fn run() {
             tray::attach(app.handle())?;
             fullscreen::start(app.handle().clone());
 
+            let tick_handle = app.handle().clone();
+            let tick_window = window.clone();
             thread::spawn(move || {
                 loop {
-                    thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(200));
                     engine.activities.tick();
                     engine.devices.tick(std::time::Instant::now());
+                    let _ = tick_handle.emit("island-tick", ());
+                    let _ = tick_window.eval("window.dispatchEvent(new Event('bloop-tick'))");
                 }
             });
             Ok(())

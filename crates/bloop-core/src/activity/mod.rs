@@ -30,7 +30,7 @@ impl ActivityService {
         let mut scheduler = self.scheduler.lock();
         if scheduler
             .latest(&snapshot.activity_id)
-            .is_some_and(|existing| existing.same_face(&snapshot))
+            .is_some_and(|existing| existing.same_content(&snapshot))
         {
             // A no-op update to a live transient presentation still extends its
             // window without producing a visual change.
@@ -78,10 +78,7 @@ impl ActivityService {
         let before = scheduler.view();
         let view = scheduler.tick(Instant::now());
         drop(scheduler);
-        if before.presence != view.presence
-            || before.activity.as_ref().map(|item| &item.activity_id)
-                != view.activity.as_ref().map(|item| &item.activity_id)
-        {
+        if before.presence != view.presence {
             self.events.emit(EngineEvent::PresenceChanged);
         }
         view
@@ -110,6 +107,5 @@ impl ActivityService {
 pub struct IslandState {
     pub presence: Presence,
     pub sticky: bool,
-    pub activity: Option<ActivitySnapshot>,
     pub activities: Vec<ActivitySnapshot>,
 }

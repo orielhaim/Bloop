@@ -3,89 +3,174 @@ use specta::Type;
 
 use super::ui::UiNode;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Type)]
+/// The generic lifecycle an Activity represents. Plugins describe what kind of
+/// information they carry through this semantic metadata; the engine never
+/// matches on plugin ids.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Type)]
 #[serde(rename_all = "camelCase")]
-pub enum Priority {
-    Background = 0,
-    Ambient = 20,
-    Standard = 40,
-    Attention = 70,
-    Critical = 90,
+pub enum ActivityLifecycle {
+    /// A short-lived one-shot event (volume change, device connect).
+    Momentary,
+    /// Persistent state that stays relevant until dismissed (now playing,
+    /// idle clock).
+    #[default]
+    Ongoing,
+    /// An operation that advances over time (transfer, install).
+    Progress,
+    /// A deadline / countdown whose urgency rises as it approaches.
+    Countdown,
+    /// A result that finished (timer completed, screenshot saved).
+    Completion,
+    /// Something that needs attention now (alarm, alert).
+    Alert,
 }
 
-impl Default for Priority {
+fn half() -> f32 {
+    0.5
+}
+fn third() -> f32 {
+    0.33
+}
+fn default_true() -> bool {
+    true
+}
+
+/// Generic attention characteristics. These are distinct semantic dimensions,
+/// not one priority integer: a volume bump is high-urgency / low-persistence,
+/// a timer is moderate-urgency / high-persistence, now playing is
+/// low-urgency / high-context.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Attention {
+    /// Base importance 0..1.
+    #[serde(default = "half")]
+    pub importance: f32,
+    /// Base urgency 0..1 at publish time.
+    #[serde(default = "third")]
+    pub urgency: f32,
+    /// How long (ms) the Activity stays relevant after its last update.
+    /// `None` means it is resident and never freshness-expires on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_ms: Option<u32>,
+    /// Window (ms) before `deadline_ms` during which urgency ramps from
+    /// `urgency` toward 1.0. Generic: only meaningful when a deadline exists.
+    /// The plugin expresses its own semantic progression; the engine derives
+    /// the curve from these generic fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub urgency_window_ms: Option<u32>,
+    /// Long-term value 0..1 — how worth keeping resident this information is.
+    #[serde(default = "half")]
+    pub persistence: f32,
+    /// Whether the Activity can be removed from the composition cheaply.
+    #[serde(default = "default_true")]
+    pub interruptible: bool,
+    /// Whether the Activity is suitable to take over the whole island
+    /// temporarily (transients like volume, timer completion).
+    #[serde(default)]
+    pub takeover_suitable: bool,
+}
+
+impl Default for Attention {
     fn default() -> Self {
-        Self::Standard
-    }
-}
-
-impl Priority {
-    pub fn from_u8(value: u8) -> Self {
-        match value {
-            0..=19 => Self::Background,
-            20..=39 => Self::Ambient,
-            40..=69 => Self::Standard,
-            70..=89 => Self::Attention,
-            _ => Self::Critical,
+        Self {
+            importance: half(),
+            urgency: third(),
+            freshness_ms: None,
+            urgency_window_ms: None,
+            persistence: half(),
+            interruptible: true,
+            takeover_suitable: false,
         }
     }
-
-    pub fn as_u8(self) -> u8 {
-        self as u8
-    }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Type)]
+/// Semantic presentation density. Names are not pixel widths; they are
+/// information-density levels the engine trades off against space.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, PartialOrd, Ord, Type)]
 #[serde(rename_all = "camelCase")]
-pub enum PresentationMode {
+pub enum Density {
+    /// A single indicator (icon, dot).
+    Micro,
+    /// One compact datum (a short number or name).
+    Small,
+    /// A small composed unit (icon + datum).
+    #[default]
     Compact,
-    Peek,
-    Presentation,
+    /// A richer unit (icon + label + secondary detail).
+    RichCompact,
+    /// The expanded face.
     Expanded,
 }
 
-/// How wide the island should prefer to be for this activity. The renderer
-/// stays authoritative over final geometry; plugins only describe intent.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Type)]
+/// One presentation variant of an Activity: a declarative UI node plus the
+/// metadata the composition engine needs to reason about its cost and value.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
-pub enum PreferredSize {
-    /// Content-driven within the standard face bounds.
-    #[default]
-    Auto,
-    /// Small, clock-like surfaces.
-    Compact,
-    /// Medium-wide surfaces such as level meters.
-    Medium,
-    /// Wide surfaces such as player chrome.
-    Wide,
+pub struct PresentationVariant {
+    pub density: Density,
+    #[serde(default)]
+    pub node: Option<UiNode>,
+    #[serde(default)]
+    pub min_width: u16,
+    pub preferred_width: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_width: Option<u16>,
+    /// Information utility 0..1 for this density.
+    #[serde(default = "half")]
+    pub utility: f32,
+    /// How long this variant must stay readable before it may swap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_readable_ms: Option<u32>,
+    /// Whether this variant may sit next to other segments. `false` means it
+    /// must be the only thing on the face.
+    #[serde(default = "default_true")]
+    pub coexist: bool,
+    /// Optional human label for diagnostics only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
+/// The semantic descriptor of one Activity. Activities *exist* here regardless
+/// of whether they are currently drawn; presentation is decided downstream by
+/// the composition engine.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivitySnapshot {
+    /// Stable identity across updates.
     pub activity_id: String,
+    /// Source plugin.
     pub plugin_id: String,
-    pub priority: u8,
-    pub mode: PresentationMode,
-    pub lifetime_ms: Option<u32>,
-    pub interruptible: bool,
-    pub compact: Option<UiNode>,
-    pub peek: Option<UiNode>,
-    pub presentation: Option<UiNode>,
-    pub expanded: Option<UiNode>,
+    /// Optional stable identity per logical instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
+    /// Group / coalescing identity: updates in the same group replace one slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     #[serde(default)]
+    pub lifecycle: ActivityLifecycle,
+    #[serde(default)]
+    pub attention: Attention,
+    /// Absolute wall-clock deadline (ms since epoch). Lets the engine derive
+    /// dynamic urgency for countdowns generically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(type = f64)]
+    pub deadline_ms: Option<u64>,
+    /// Transient window: how long a transient presentation stays relevant after
+    /// its last update. `None` means the Activity is resident and persists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifetime_ms: Option<u32>,
+    /// The compact presentation variants the engine may choose from.
+    #[serde(default)]
+    pub variants: Vec<PresentationVariant>,
+    /// The expanded face shown when the island is opened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expanded: Option<UiNode>,
+    /// Small widget preview for the home customization surface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<UiNode>,
     #[serde(default)]
     #[specta(type = f64)]
     pub timestamp_ms: u64,
-    /// Updates sharing a coalescing key replace one presentation instead of
-    /// being queued. Generic; a transient surface (for example a system volume
-    /// or device change) keeps one live presentation across many updates.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub coalescing_key: Option<String>,
-    /// Preferred presentation width intent. Generic sizing hint.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preferred_size: Option<PreferredSize>,
 }
 
 impl ActivitySnapshot {
@@ -99,10 +184,14 @@ impl ActivitySnapshot {
         if !snapshot.activity_id.starts_with(plugin_id) {
             snapshot.activity_id = format!("{plugin_id}.{}", snapshot.activity_id);
         }
+        if snapshot.instance_id.is_none() {
+            snapshot.instance_id = Some(snapshot.activity_id.clone());
+        }
         Ok(snapshot)
     }
 
-    pub fn same_face(&self, other: &Self) -> bool {
+    /// Whether two snapshots describe the same content (ignoring timestamps).
+    pub fn same_content(&self, other: &Self) -> bool {
         let mut left = self.clone();
         let mut right = other.clone();
         left.timestamp_ms = 0;
@@ -110,7 +199,8 @@ impl ActivitySnapshot {
         left == right
     }
 
-    pub fn priority_band(&self) -> Priority {
-        Priority::from_u8(self.priority)
+    /// Whether this Activity is a transient (has a freshness window).
+    pub fn is_transient(&self) -> bool {
+        self.attention.freshness_ms.is_some() || self.lifetime_ms.is_some()
     }
 }

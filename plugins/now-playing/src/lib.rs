@@ -6,7 +6,7 @@ wit_bindgen::generate!({
 use crate::exports::bloop::abi::activity::Guest;
 use bloop::abi::media::{MediaSession, PlaybackState};
 use bloop_sdk as ui;
-use bloop_sdk::Snapshot;
+use bloop_sdk::{Attention, Snapshot};
 use std::sync::Mutex;
 
 const PLUGIN_ID: &str = "bloop.activity.now-playing";
@@ -102,13 +102,6 @@ fn err(error: bloop::abi::types::Error) -> String {
     format!("{error:?}")
 }
 
-fn last_session() -> Option<MediaSession> {
-    LAST_SESSION
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-}
-
 fn remember_session(session: MediaSession) -> MediaSession {
     let mut last = LAST_SESSION.lock().unwrap_or_else(|e| e.into_inner());
     let merged = if let Some(previous) = last.as_ref().filter(|previous| previous.id == session.id)
@@ -164,11 +157,24 @@ fn is_playing(state: PlaybackState) -> bool {
     matches!(state, PlaybackState::Playing | PlaybackState::Changing)
 }
 
+fn is_active_media(state: PlaybackState) -> bool {
+    matches!(
+        state,
+        PlaybackState::Playing | PlaybackState::Paused | PlaybackState::Changing
+    )
+}
+
+fn forget_session() {
+    *LAST_SESSION.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *SESSION_ID.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
 fn pick_session(sessions: &[MediaSession]) -> Option<MediaSession> {
     let last_id = SESSION_ID.lock().unwrap_or_else(|e| e.into_inner()).clone();
     if let Some(id) = last_id.as_ref()
-        && let Some(session) = sessions.iter().find(|session| &session.id == id)
-        && is_playing(session.state)
+        && let Some(session) = sessions
+            .iter()
+            .find(|session| &session.id == id && is_active_media(session.state))
     {
         return Some(session.clone());
     }
@@ -176,17 +182,25 @@ fn pick_session(sessions: &[MediaSession]) -> Option<MediaSession> {
         .iter()
         .find(|session| is_playing(session.state))
         .cloned()
-        .or_else(|| sessions.first().cloned())
+        .or_else(|| {
+            sessions
+                .iter()
+                .find(|session| matches!(session.state, PlaybackState::Paused))
+                .cloned()
+        })
 }
 
 fn active_session() -> Option<MediaSession> {
     let sessions = bloop::abi::host::media_sessions();
-    let current = bloop::abi::host::media_current();
-    let last_id = SESSION_ID.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let found = pick_session(&sessions)
-        .or(current)
-        .or_else(|| last_id.and_then(|id| sessions.into_iter().find(|session| session.id == id)));
-    found.map(remember_session).or_else(last_session)
+    let current = bloop::abi::host::media_current().filter(|session| is_active_media(session.state));
+    let found = pick_session(&sessions).or(current);
+    match found {
+        Some(session) if is_active_media(session.state) => Some(remember_session(session)),
+        _ => {
+            forget_session();
+            None
+        }
+    }
 }
 
 fn parse_position(payload: &str) -> u64 {
@@ -301,27 +315,12 @@ fn commit_face(key: String, position: u64) -> bool {
 }
 
 fn publish_idle() {
+    forget_session();
     if !commit_face("idle".into(), 0) {
+        let _ = bloop::abi::host::dismiss(ACTIVITY_ID);
         return;
     }
-    let idle = ui::ui_column(vec![ui::ui_secondary("Nothing is playing")], 4);
-    let preview = player_chrome("Not playing", "", false, 0, 180_000, false, "");
-    publish_json(&Snapshot {
-        activity_id: ACTIVITY_ID,
-        plugin_id: PLUGIN_ID,
-        priority: 40,
-        mode: "compact",
-        lifetime_ms: None,
-        interruptible: true,
-        compact: None,
-        peek: None,
-        presentation: None,
-        expanded: Some(idle),
-        preview: Some(preview),
-        timestamp_ms: bloop::abi::host::now_ms(),
-        coalescing_key: None,
-        preferred_size: None,
-    });
+    let _ = bloop::abi::host::dismiss(ACTIVITY_ID);
 }
 
 fn player_chrome(
@@ -391,19 +390,24 @@ fn publish_views(
     ) {
         return;
     }
-    let peek = ui::ui_row(
-        vec![
-            if has_artwork {
-                ui::ui_artwork(&artwork_src)
-            } else {
-                ui::ui_badge("♪")
-            },
-            ui::ui_text(title, "title"),
-            ui::ui_grow(),
-            ui::ui_waveform(playing),
-        ],
-        10,
-    );
+    let artwork = if has_artwork {
+        ui::ui_artwork(&artwork_src)
+    } else {
+        ui::ui_badge("♪")
+    };
+    let title_text = ui::ui_text(title, "title");
+    let waveform = ui::ui_waveform(playing);
+
+    // Semantic presentation variants: the engine chooses how much to show.
+    let micro = ui::ui_waveform(playing);
+    let small = ui::ui_row(vec![artwork.clone(), waveform.clone()], 8);
+    let compact = ui::ui_row(vec![artwork.clone(), title_text.clone(), ui::ui_grow(), waveform.clone()], 10);
+    let mut rich_children = vec![artwork.clone(), ui::ui_column(vec![title_text.clone(), ui::ui_secondary(artist)], 2), ui::ui_grow(), waveform.clone()];
+    if artist.is_empty() {
+        rich_children = vec![artwork.clone(), title_text.clone(), ui::ui_grow(), waveform.clone()];
+    }
+    let rich_compact = ui::ui_row(rich_children, 10);
+
     let chrome = player_chrome(
         title,
         artist,
@@ -416,18 +420,69 @@ fn publish_views(
     publish_json(&Snapshot {
         activity_id: ACTIVITY_ID,
         plugin_id: PLUGIN_ID,
-        priority: 40,
-        mode: "peek",
+        instance_id: None,
+        group: None,
+        lifecycle: Some("ongoing"),
+        attention: Some(Attention {
+            importance: Some(0.6),
+            urgency: Some(0.35),
+            freshness_ms: None,
+            urgency_window_ms: None,
+            persistence: Some(0.85),
+            interruptible: Some(true),
+            takeover_suitable: Some(false),
+        }),
+        deadline_ms: None,
         lifetime_ms: None,
-        interruptible: true,
-        compact: None,
-        peek: Some(peek.clone()),
-        presentation: Some(peek),
+        variants: vec![
+            ui::PresentationVariant {
+                density: "micro",
+                node: micro,
+                min_width: 16,
+                preferred_width: 22,
+                max_width: None,
+                utility: 0.3,
+                min_readable_ms: None,
+                coexist: true,
+                label: None,
+            },
+            ui::PresentationVariant {
+                density: "small",
+                node: small,
+                min_width: 40,
+                preferred_width: 56,
+                max_width: None,
+                utility: 0.45,
+                min_readable_ms: None,
+                coexist: true,
+                label: None,
+            },
+            ui::PresentationVariant {
+                density: "compact",
+                node: compact,
+                min_width: 92,
+                preferred_width: 168,
+                max_width: Some(196),
+                utility: 0.8,
+                min_readable_ms: None,
+                coexist: true,
+                label: None,
+            },
+            ui::PresentationVariant {
+                density: "richCompact",
+                node: rich_compact,
+                min_width: 120,
+                preferred_width: 220,
+                max_width: Some(300),
+                utility: 1.0,
+                min_readable_ms: None,
+                coexist: false,
+                label: None,
+            },
+        ],
         expanded: Some(chrome.clone()),
         preview: Some(chrome),
         timestamp_ms: bloop::abi::host::now_ms(),
-        coalescing_key: None,
-        preferred_size: None,
     });
 }
 

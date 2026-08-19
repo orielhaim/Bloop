@@ -66,11 +66,10 @@ pub fn start(window: WebviewWindow) {
             #[cfg(not(windows))]
             let left_down = false;
 
-            if left_down && hit {
-                dragging = true;
-            }
-            if !left_down {
+            if (!left_down) {
                 dragging = false;
+            } else if (hit || dragging) {
+                dragging = true;
             }
 
             let _ = window.set_ignore_cursor_events(!(hit || dragging));
@@ -85,10 +84,10 @@ pub fn start(window: WebviewWindow) {
                 let escape_down = native::key_down(native::VK_ESCAPE_KEY);
                 let dismissable = snapshot.mode == "expanded" || snapshot.mode == "presentation";
 
-                if left_down && !left_was_down && !hit && dismissable {
+                if left_down && !left_was_down && !hit && dismissable && !dragging {
                     let _ = window.emit("island-dismiss", ());
                 }
-                if escape_down && !escape_was_down && snapshot.mode != "resting" {
+                if escape_down && !escape_was_down && snapshot.mode != "resting" && !left_down {
                     let _ = window.emit("island-dismiss", ());
                 }
 

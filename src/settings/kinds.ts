@@ -31,6 +31,15 @@ export function isBuiltin(plugin: PluginRecord) {
   return plugin.id.startsWith("bloop.");
 }
 
+export function sortPlugins(plugins: PluginRecord[]): PluginRecord[] {
+  const byName = (left: PluginRecord, right: PluginRecord) =>
+    left.manifest.name.localeCompare(right.manifest.name);
+  return [
+    ...plugins.filter((plugin) => plugin.enabled).sort(byName),
+    ...plugins.filter((plugin) => !plugin.enabled).sort(byName),
+  ];
+}
+
 export function matchesQuery(plugin: PluginRecord, query: string) {
   const haystack = [
     plugin.manifest.name,

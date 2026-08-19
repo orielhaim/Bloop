@@ -6,12 +6,12 @@ wit_bindgen::generate!({
 use crate::exports::bloop::abi::activity::Guest;
 use bloop::abi::audio::AudioState;
 use bloop_sdk as ui;
-use bloop_sdk::Snapshot;
+use bloop_sdk::{Attention, Snapshot};
 use std::sync::Mutex;
 
 const PLUGIN_ID: &str = "bloop.activity.volume";
 const ACTIVITY_ID: &str = "volume";
-const COALESCING_KEY: &str = "system-audio";
+const GROUP: &str = "system-audio";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Settings {
@@ -126,43 +126,84 @@ fn react(event_state: Option<AudioState>) {
 }
 
 fn publish(state: &AudioState, settings: &Settings) {
-    let row = presentation(state, settings);
+    let percent = (f64::from(state.volume) * 100.0).round() as u32;
+    let icon_name = if state.muted { "volume-x" } else { "volume" };
+    let icon = ui::ui_icon(icon_name);
+    let bar = ui::ui_progress(f64::from(state.volume), 1.0);
+    let mut compact_children = vec![icon.clone(), bar.clone()];
+    let label = if state.muted {
+        "Muted".to_string()
+    } else if settings.show_percentage {
+        format!("{percent}%")
+    } else {
+        String::new()
+    };
+    if !label.is_empty() {
+        compact_children.push(ui::ui_text(&label, "numeric"));
+    }
+
+    let variants = vec![
+        ui::PresentationVariant {
+            density: "micro",
+            node: icon.clone(),
+            min_width: 20,
+            preferred_width: 26,
+            max_width: None,
+            utility: 0.35,
+            min_readable_ms: None,
+            coexist: true,
+            label: Some("icon"),
+        },
+        ui::PresentationVariant {
+            density: "compact",
+            node: ui::ui_row(vec![icon.clone(), bar.clone()], 10),
+            min_width: 64,
+            preferred_width: 110,
+            max_width: Some(160),
+            utility: 0.7,
+            min_readable_ms: None,
+            coexist: true,
+            label: Some("bar"),
+        },
+    ];
+
+    let rich = if label.is_empty() {
+        ui::ui_row(vec![icon.clone(), bar.clone()], 12)
+    } else {
+        ui::ui_row(vec![icon.clone(), bar.clone(), ui::ui_text(&label, "numeric")], 12)
+    };
+    let mut all = variants;
+    all.push(ui::PresentationVariant {
+        density: "richCompact",
+        node: rich,
+            min_width: 168,
+            preferred_width: 196,
+            max_width: Some(220),
+        utility: 1.0,
+        min_readable_ms: None,
+        coexist: false,
+        label: Some("level"),
+    });
+
+    let duration = settings.duration_ms;
     if let Ok(json) = serde_json::to_string(&Snapshot {
         activity_id: ACTIVITY_ID,
         plugin_id: PLUGIN_ID,
-        priority: 62,
-        mode: "presentation",
-        lifetime_ms: Some(settings.duration_ms),
-        interruptible: true,
-        compact: None,
-        peek: None,
-        presentation: Some(row),
+        instance_id: None,
+        group: Some(GROUP),
+        lifecycle: Some("momentary"),
+        attention: Some(Attention::default().with(0.7, 0.9, Some(duration)).takeover(true)),
+        deadline_ms: None,
+        lifetime_ms: Some(duration),
+        variants: all,
         expanded: None,
         preview: None,
         timestamp_ms: bloop::abi::host::now_ms(),
-        coalescing_key: Some(COALESCING_KEY),
-        preferred_size: Some("medium"),
     }) {
         let _ = bloop::abi::host::publish(&json);
     } else {
         bloop::abi::host::log("error", "volume publish: snapshot serialization failed");
     }
-}
-
-fn presentation(state: &AudioState, settings: &Settings) -> serde_json::Value {
-    let icon = if state.muted {
-        ui::ui_icon("volume-x")
-    } else {
-        ui::ui_icon("volume")
-    };
-    let mut children = vec![icon, ui::ui_progress(f64::from(state.volume), 1.0)];
-    if state.muted {
-        children.push(ui::ui_text("Muted", "body"));
-    } else if settings.show_percentage {
-        let percent = (f64::from(state.volume) * 100.0).round() as u32;
-        children.push(ui::ui_text(&format!("{percent}%"), "numeric"));
-    }
-    ui::ui_row(children, 12)
 }
 
 export!(VolumePlugin);

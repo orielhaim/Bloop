@@ -7,13 +7,13 @@ use crate::exports::bloop::abi::activity::Guest;
 use bloop::abi::capability::CapabilityEvent;
 use bloop::abi::devices::{Device, DeviceEvent, DeviceKind};
 use bloop_sdk as ui;
-use bloop_sdk::Snapshot;
+use bloop_sdk::{Attention, Snapshot};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 const PLUGIN_ID: &str = "bloop.activity.bluetooth";
 const ACTIVITY_ID: &str = "bluetooth";
-const COALESCING_KEY: &str = "system-devices";
+const GROUP: &str = "system-devices";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Settings {
@@ -134,21 +134,30 @@ fn load_settings() -> Settings {
 }
 
 fn publish(node: serde_json::Value, settings: &Settings) {
+    let duration = settings.duration_ms;
     if let Ok(json) = serde_json::to_string(&Snapshot {
         activity_id: ACTIVITY_ID,
         plugin_id: PLUGIN_ID,
-        priority: 60,
-        mode: "presentation",
-        lifetime_ms: Some(settings.duration_ms),
-        interruptible: true,
-        compact: None,
-        peek: None,
-        presentation: Some(node),
+        instance_id: None,
+        group: Some(GROUP),
+        lifecycle: Some("momentary"),
+        attention: Some(Attention::default().with(0.55, 0.7, Some(duration)).takeover(true)),
+        deadline_ms: None,
+        lifetime_ms: Some(duration),
+        variants: vec![ui::PresentationVariant {
+            density: "compact",
+            node,
+            min_width: 96,
+            preferred_width: 168,
+            max_width: Some(240),
+            utility: 0.85,
+            min_readable_ms: None,
+            coexist: false,
+            label: None,
+        }],
         expanded: None,
         preview: None,
         timestamp_ms: bloop::abi::host::now_ms(),
-        coalescing_key: Some(COALESCING_KEY),
-        preferred_size: None,
     }) {
         let _ = bloop::abi::host::publish(&json);
     }

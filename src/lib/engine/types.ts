@@ -32,6 +32,21 @@ export type UiNode =
       size?: string;
     }
   | { kind: "progress"; value: number; max?: number }
+  | {
+      kind: "countdown";
+      deadlineMs: number;
+      running?: boolean;
+      pausedRemainingMs?: number | null;
+      totalMs?: number | null;
+    }
+  | {
+      kind: "ruler";
+      valueMs: number;
+      minMs: number;
+      maxMs: number;
+      snapMs?: number | null;
+      action: string;
+    }
   | { kind: "seekBar"; positionMs: number; durationMs: number; action: string }
   | { kind: "toggle"; id: string; on: boolean; label?: string }
   | { kind: "badge"; text: string }
@@ -42,29 +57,61 @@ export type UiNode =
   | { kind: "column"; children?: UiNode[]; gap?: number }
   | { kind: "stack"; children?: UiNode[] };
 
+export type ActivityLifecycle =
+  | "momentary"
+  | "ongoing"
+  | "progress"
+  | "countdown"
+  | "completion"
+  | "alert";
+
+export type Density =
+  | "micro"
+  | "small"
+  | "compact"
+  | "richCompact"
+  | "expanded";
+
+export type Attention = {
+  importance: number;
+  urgency: number;
+  freshnessMs?: number | null;
+  urgencyWindowMs?: number | null;
+  persistence: number;
+  interruptible: boolean;
+  takeoverSuitable: boolean;
+};
+
+export type PresentationVariant = {
+  density: Density;
+  node?: UiNode | null;
+  minWidth: number;
+  preferredWidth: number;
+  maxWidth?: number | null;
+  utility: number;
+  minReadableMs?: number | null;
+  coexist: boolean;
+  label?: string | null;
+};
+
 export type ActivitySnapshot = {
   activityId: string;
   pluginId: string;
-  priority: number;
-  mode: "compact" | "peek" | "presentation" | "expanded";
+  instanceId?: string | null;
+  group?: string | null;
+  lifecycle: ActivityLifecycle;
+  attention: Attention;
+  deadlineMs?: number | null;
   lifetimeMs?: number | null;
-  interruptible: boolean;
-  compact?: UiNode | null;
-  peek?: UiNode | null;
-  presentation?: UiNode | null;
+  variants: PresentationVariant[];
   expanded?: UiNode | null;
   preview?: UiNode | null;
   timestampMs: number;
-  coalescingKey?: string | null;
-  preferredSize?: PreferredSize | null;
 };
-
-export type PreferredSize = "auto" | "compact" | "medium" | "wide";
 
 export type IslandState = {
   presence: Presence;
   sticky: boolean;
-  activity: ActivitySnapshot | null;
   activities: ActivitySnapshot[];
 };
 
@@ -86,6 +133,15 @@ export type IdleProvider =
   | { kind: "media" }
   | { kind: "plugin"; id: string };
 
+export type CompositionPreference = "auto" | "minimal" | "rich";
+
+export type ClockMotion = "tick" | "smooth";
+
+export type ClockSettings = {
+  showSeconds: boolean;
+  motion: ClockMotion;
+};
+
 export type AppSettings = {
   islandEnabled: boolean;
   autostart: boolean;
@@ -99,6 +155,8 @@ export type AppSettings = {
   layout: HomeLayout;
   pluginSettings: Record<string, Record<string, unknown>>;
   idleProvider: IdleProvider;
+  composition?: CompositionPreference;
+  clock: ClockSettings;
 };
 
 export type Spring = { stiffness: number; damping: number; mass: number };
@@ -203,4 +261,6 @@ export const fallbackSettings: AppSettings = {
   layout: { items: [] },
   pluginSettings: {},
   idleProvider: { kind: "clock" },
+  composition: "auto",
+  clock: { showSeconds: true, motion: "tick" },
 };

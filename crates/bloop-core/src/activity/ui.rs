@@ -49,6 +49,38 @@ pub enum UiNode {
         #[serde(default = "one")]
         max: f64,
     },
+    Countdown {
+        /// Absolute wall-clock deadline (ms since epoch). The frontend
+        /// interpolates locally between authoritative sync points.
+        #[specta(type = f64)]
+        deadline_ms: u64,
+        /// Whether the countdown is actively running.
+        #[serde(default)]
+        running: bool,
+        /// Remaining time when paused (ms).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[specta(type = f64)]
+        paused_remaining_ms: Option<u64>,
+        /// Total duration for progress context (ms).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[specta(type = f64)]
+        total_ms: Option<u64>,
+    },
+    Ruler {
+        /// Currently selected value (ms).
+        #[specta(type = f64)]
+        value_ms: u64,
+        #[specta(type = f64)]
+        min_ms: u64,
+        #[specta(type = f64)]
+        max_ms: u64,
+        /// Snap increment (ms). The frontend chooses adaptive tick density.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[specta(type = f64)]
+        snap_ms: Option<u64>,
+        /// Action id emitted when the value is committed.
+        action: String,
+    },
     SeekBar {
         #[specta(type = f64)]
         position_ms: u64,
@@ -178,6 +210,21 @@ mod tests {
         match node {
             UiNode::Waveform { active } => assert!(active),
             _ => panic!("expected waveform"),
+        }
+    }
+
+    #[test]
+    fn parses_timer_ruler_row() {
+        let node = parse_ui(
+            r#"{"kind":"row","children":[{"kind":"ruler","valueMs":300000,"minMs":5000,"maxMs":10800000,"snapMs":null,"action":"setValue"},{"kind":"column","children":[{"kind":"iconButton","id":"start","icon":"play","label":"Start"},{"kind":"iconButton","id":"reset","icon":"rotate-ccw","label":"Reset"}],"gap":8}],"gap":12,"align":"center"}"#,
+        )
+        .unwrap();
+        match node {
+            UiNode::Row { children, .. } => {
+                assert_eq!(children.len(), 2);
+                assert!(matches!(children.first(), Some(UiNode::Ruler { .. })));
+            }
+            _ => panic!("expected row"),
         }
     }
 }

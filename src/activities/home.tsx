@@ -1,10 +1,13 @@
 import { CollisionPriority } from "@dnd-kit/abstract";
-import { pointerIntersection } from "@dnd-kit/collision";
 import { useDraggable, useDroppable } from "@dnd-kit/react";
 import { useSortable } from "@dnd-kit/react/sortable";
+import { Pause, Play, Plus, RotateCcw, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import { Component, type ReactNode, type Ref } from "react";
 import { FiX } from "react-icons/fi";
-import { ActivityView } from "@/activities/renderer";
+import { ActivityView, findUiNode, previewNode } from "@/activities/renderer";
+import { UiCountdown } from "@/components/timer/digits";
+import { WheelDurationPicker } from "@/components/timer/wheel-duration";
 import {
   type CatalogItem,
   catalogItem,
@@ -12,7 +15,7 @@ import {
   sameActivity,
   unplacedCatalog,
 } from "@/lib/engine/layout";
-import type { HomeLayout } from "@/lib/engine/types";
+import type { ActivitySnapshot, HomeLayout, UiNode } from "@/lib/engine/types";
 import { cn } from "@/lib/utils";
 
 const pop = {
@@ -20,88 +23,35 @@ const pop = {
   ease: [0.22, 1, 0.36, 1] as const,
 };
 
-export function isIslandDropTarget(targetId: unknown): boolean {
-  const target = String(targetId ?? "");
-  return Boolean(target) && target !== "tray" && !target.startsWith("tray:");
+export const HOME_GROUP = "home";
+export const TRAY_GROUP = "tray";
+export const ACTIVITY_TYPE = "activity";
+
+export function dragActivityId(sourceId: string) {
+  return sourceId.startsWith("tray:") ? sourceId.slice(5) : sourceId;
 }
 
-export function dropIndex(
-  layout: HomeLayout,
-  targetId: unknown,
-  fallback: number,
-): number {
-  const target = String(targetId ?? "");
-  if (target === "home" || target === "tray" || !target) {
-    return placedItems(layout).length;
+class CardGuard extends Component<
+  { fallback: ReactNode; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
   }
-  const index = placedItems(layout).findIndex((id) => sameActivity(id, target));
-  return index >= 0 ? index : fallback;
+
+  componentDidCatch(error: Error) {
+    console.error("home card render failed", error);
+  }
+
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
 }
 
-export function applyHomeDrag(
-  layout: HomeLayout,
-  sourceId: string,
-  sourceIndex: number,
-  targetId: unknown,
-): HomeLayout | null {
-  const items = [...placedItems(layout)];
-  const target = String(targetId ?? "");
-
-  if (sourceId.startsWith("tray:")) {
-    const activityId = sourceId.slice(5);
-    const next = items.filter((id) => !sameActivity(id, activityId));
-    if (!isIslandDropTarget(targetId)) {
-      return { items: next };
-    }
-    if (!next.some((id) => sameActivity(id, activityId))) {
-      next.splice(
-        Math.min(Math.max(sourceIndex, 0), next.length),
-        0,
-        activityId,
-      );
-    }
-    return { items: next };
-  }
-
-  const from = items.findIndex((id) => sameActivity(id, sourceId));
-  if (from < 0) {
-    return null;
-  }
-  const [moved] = items.splice(from, 1);
-  if (!moved) {
-    return null;
-  }
-  if (target === "tray") {
-    return { items };
-  }
-  if (!isIslandDropTarget(targetId)) {
-    return layout;
-  }
-  items.splice(Math.min(sourceIndex, items.length), 0, moved);
-  return { items };
-}
-
-export function hoverHomeLayout(
-  layout: HomeLayout,
-  sourceId: string,
-  sourceIndex: number,
-  targetId: unknown,
-): HomeLayout | null {
-  if (sourceId.startsWith("tray:")) {
-    if (!isIslandDropTarget(targetId)) {
-      return null;
-    }
-    return applyHomeDrag(
-      layout,
-      sourceId,
-      dropIndex(layout, targetId, sourceIndex),
-      targetId,
-    );
-  }
-  if (String(targetId ?? "") === "tray") {
-    return applyHomeDrag(layout, sourceId, sourceIndex, "tray");
-  }
-  return null;
+function isTimerItem(item: CatalogItem) {
+  return item.pluginId.includes("timer") || item.id.includes("timer");
 }
 
 export function placeActivity(
@@ -124,6 +74,15 @@ export function removeActivity(
   };
 }
 
+function cardNode(item: CatalogItem): {
+  activity: ActivitySnapshot | null;
+  node: UiNode | null;
+} {
+  const activity = item.snapshot;
+  const node = activity?.expanded ?? previewNode(activity);
+  return { activity, node };
+}
+
 export function HomeStrip({
   layout,
   committed,
@@ -143,14 +102,20 @@ export function HomeStrip({
 }) {
   const itemIds = placedItems(layout);
   const placed = placedItems(committed);
+  const sortable = interactive && customizing;
   const { ref } = useDroppable({
-    id: interactive ? "home" : "home-measure",
-    disabled: !interactive,
-    collisionDetector: pointerIntersection,
-    collisionPriority: CollisionPriority.Normal,
+    id: interactive ? HOME_GROUP : "home-measure",
+    type: "column",
+    accept: ACTIVITY_TYPE,
+    collisionPriority: CollisionPriority.Low,
+    disabled: !sortable,
   });
   return (
-    <div ref={ref} className="home">
+    <div
+      ref={ref}
+      className="home"
+      data-home-live={interactive ? "" : undefined}
+    >
       <section className="home-strip">
         {itemIds.length === 0 ? (
           <p className="home-empty">No activities yet.</p>
@@ -164,7 +129,7 @@ export function HomeStrip({
             const ghost = !placed.some((placedId) =>
               sameActivity(placedId, item.id),
             );
-            return (
+            return sortable ? (
               <HomeCard
                 key={item.id}
                 id={item.id}
@@ -172,7 +137,17 @@ export function HomeStrip({
                 item={item}
                 customizing={customizing}
                 ghost={ghost}
-                interactive={interactive}
+                onAction={onAction}
+                onRemove={() => onRemove(item.id)}
+              />
+            ) : (
+              <HomeCardView
+                key={item.id}
+                id={item.id}
+                item={item}
+                customizing={customizing}
+                ghost={ghost}
+                dragging={false}
                 onAction={onAction}
                 onRemove={() => onRemove(item.id)}
               />
@@ -190,7 +165,6 @@ function HomeCard({
   item,
   customizing,
   ghost,
-  interactive,
   onAction,
   onRemove,
 }: {
@@ -199,32 +173,59 @@ function HomeCard({
   item: CatalogItem;
   customizing: boolean;
   ghost: boolean;
-  interactive: boolean;
   onAction: (pluginId: string, actionId: string, payload?: string) => void;
   onRemove: () => void;
 }) {
   const { ref, isDragging } = useSortable({
     id,
     index,
-    group: "home",
-    disabled: !interactive || !customizing || ghost,
-    collisionDetector: pointerIntersection,
-    plugins: [],
+    type: ACTIVITY_TYPE,
+    accept: ACTIVITY_TYPE,
+    group: HOME_GROUP,
   });
-  const activity = item.snapshot;
-  const node = customizing
-    ? (activity?.preview ??
-      activity?.expanded ??
-      activity?.peek ??
-      activity?.compact)
-    : (activity?.expanded ?? activity?.peek ?? activity?.compact);
+  return (
+    <HomeCardView
+      ref={ref}
+      id={id}
+      item={item}
+      customizing={customizing}
+      ghost={ghost}
+      dragging={isDragging}
+      onAction={onAction}
+      onRemove={onRemove}
+    />
+  );
+}
+
+function HomeCardView({
+  ref,
+  id,
+  item,
+  customizing,
+  ghost,
+  dragging,
+  onAction,
+  onRemove,
+}: {
+  ref?: Ref<HTMLElement>;
+  id: string;
+  item: CatalogItem;
+  customizing: boolean;
+  ghost: boolean;
+  dragging: boolean;
+  onAction: (pluginId: string, actionId: string, payload?: string) => void;
+  onRemove: () => void;
+}) {
+  const { activity, node } = cardNode(item);
   return (
     <article
       ref={ref}
+      data-home-card={id}
+      data-plugin={item.pluginId}
       className={cn(
         "home-card",
         customizing && "is-editing",
-        isDragging && "is-dragging",
+        dragging && "is-dragging",
         ghost && "is-hovering",
       )}
     >
@@ -233,7 +234,7 @@ function HomeCard({
         initial={ghost ? { opacity: 0, scale: 0.86 } : false}
         animate={{ opacity: 1, scale: 1 }}
         exit={ghost ? { opacity: 0, scale: 0.86 } : undefined}
-        transition={ghost ? pop : { duration: 0 }}
+        transition={ghost ? pop : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
       >
         {customizing && !ghost ? (
           <button
@@ -249,22 +250,30 @@ function HomeCard({
             <FiX size={12} />
           </button>
         ) : null}
-        {activity && node ? (
-          <div className={cn("home-card-preview", customizing && "is-mock")}>
-            <ActivityView
-              node={node}
-              snapshot={activity}
-              onAction={
-                customizing
-                  ? () => undefined
-                  : (actionId, payload) =>
-                      onAction(activity.pluginId, actionId, payload)
-              }
+        <div className={cn("home-card-preview", customizing && "is-mock")}>
+          {isTimerItem(item) ? (
+            <TimerHome
+              item={item}
+              customizing={customizing}
+              onAction={onAction}
             />
-          </div>
-        ) : (
-          <p className="face-kicker">{item.name}</p>
-        )}
+          ) : activity && node ? (
+            <CardGuard fallback={<p className="face-kicker">{item.name}</p>}>
+              <ActivityView
+                node={node}
+                snapshot={activity}
+                onAction={
+                  customizing
+                    ? () => undefined
+                    : (actionId, payload) =>
+                        onAction(activity.pluginId, actionId, payload)
+                }
+              />
+            </CardGuard>
+          ) : (
+            <p className="face-kicker">{item.name}</p>
+          )}
+        </div>
       </motion.div>
     </article>
   );
@@ -274,7 +283,6 @@ export function ActivityTray({
   catalog,
   layout,
   committed,
-  draggingId,
   onPlace,
 }: {
   catalog: CatalogItem[];
@@ -284,9 +292,10 @@ export function ActivityTray({
   onPlace: (activityId: string) => void;
 }) {
   const { ref } = useDroppable({
-    id: "tray",
-    collisionDetector: pointerIntersection,
-    collisionPriority: CollisionPriority.Normal,
+    id: TRAY_GROUP,
+    type: "column",
+    accept: ACTIVITY_TYPE,
+    collisionPriority: CollisionPriority.Low,
   });
   const available = unplacedCatalog(catalog, layout);
   const placed = placedItems(committed);
@@ -296,16 +305,130 @@ export function ActivityTray({
         <p className="home-empty">No activities in the tray.</p>
       ) : null}
       <AnimatePresence initial={false}>
-        {available.map((item) => (
+        {available.map((item, index) => (
           <TrayChip
-            key={item.pluginId}
+            key={item.id}
             item={item}
+            index={index}
             ghost={placed.some((id) => sameActivity(id, item.id))}
-            dragging={Boolean(draggingId && sameActivity(draggingId, item.id))}
             onPlace={() => onPlace(item.id)}
           />
         ))}
       </AnimatePresence>
+    </div>
+  );
+}
+
+function TimerHome({
+  item,
+  customizing,
+  onAction,
+}: {
+  item: CatalogItem;
+  customizing: boolean;
+  onAction: (pluginId: string, actionId: string, payload?: string) => void;
+}) {
+  const snapshot = item.snapshot;
+  const root = snapshot?.expanded ?? snapshot?.preview ?? null;
+  const ruler = findUiNode(root, "ruler");
+  const countdown = findUiNode(root, "countdown");
+  const emit = (actionId: string, payload?: string) => {
+    if (!customizing) {
+      onAction(item.pluginId, actionId, payload);
+    }
+  };
+
+  if (countdown && countdown.kind === "countdown") {
+    const running = countdown.running !== false;
+    return (
+      <div className="timer-live">
+        <UiCountdown
+          deadlineMs={countdown.deadlineMs}
+          running={running}
+          pausedRemainingMs={countdown.pausedRemainingMs ?? null}
+          totalMs={countdown.totalMs ?? null}
+          onAction={emit}
+        />
+        <div className="timer-live-actions">
+          <button
+            type="button"
+            className="ui-icon-button"
+            aria-label={running ? "Pause" : "Resume"}
+            onClick={(event) => {
+              event.stopPropagation();
+              emit(running ? "pause" : "resume");
+            }}
+          >
+            {running ? (
+              <Pause size={15} strokeWidth={1.85} />
+            ) : (
+              <Play size={15} strokeWidth={1.85} />
+            )}
+          </button>
+          <button
+            type="button"
+            className="ui-icon-button"
+            aria-label="Add minute"
+            onClick={(event) => {
+              event.stopPropagation();
+              emit("addMinute");
+            }}
+          >
+            <Plus size={15} strokeWidth={1.85} />
+          </button>
+          <button
+            type="button"
+            className="ui-icon-button"
+            aria-label="Cancel"
+            onClick={(event) => {
+              event.stopPropagation();
+              emit("cancel");
+            }}
+          >
+            <X size={15} strokeWidth={1.85} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const valueMs = ruler && ruler.kind === "ruler" ? ruler.valueMs : 5 * 60_000;
+  const minMs = ruler && ruler.kind === "ruler" ? ruler.minMs : 5_000;
+  const maxMs =
+    ruler && ruler.kind === "ruler" ? ruler.maxMs : 3 * 60 * 60 * 1000;
+
+  return (
+    <div className="ui-row center" style={{ gap: 12 }}>
+      <WheelDurationPicker
+        valueMs={valueMs ?? 5 * 60_000}
+        minMs={minMs ?? 5_000}
+        maxMs={maxMs ?? 3 * 60 * 60 * 1000}
+        onCommit={(value) => emit("setValue", String(value))}
+      />
+      <div className="ui-column" style={{ gap: 8 }}>
+        <button
+          type="button"
+          className="ui-icon-button"
+          aria-label="Start"
+          onClick={(event) => {
+            event.stopPropagation();
+            emit("start");
+          }}
+        >
+          <Play size={16} strokeWidth={1.75} />
+        </button>
+        <button
+          type="button"
+          className="ui-icon-button"
+          aria-label="Reset"
+          onClick={(event) => {
+            event.stopPropagation();
+            emit("reset");
+          }}
+        >
+          <RotateCcw size={16} strokeWidth={1.75} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -326,24 +449,27 @@ export function ActivityIcon({
 function TrayChip({
   item,
   ghost,
-  dragging,
   onPlace,
 }: {
   item: CatalogItem;
+  index: number;
   ghost: boolean;
-  dragging: boolean;
   onPlace: () => void;
 }) {
-  const { ref, isDragging } = useDraggable({ id: `tray:${item.id}` });
+  const { ref, isDragging } = useDraggable({
+    id: `tray:${item.id}`,
+    type: ACTIVITY_TYPE,
+    disabled: ghost,
+  });
   return (
     <motion.button
       ref={ref}
       type="button"
       initial={ghost ? { opacity: 0, scale: 0.86 } : false}
-      animate={{ opacity: dragging || isDragging ? 0.45 : 1, scale: 1 }}
+      animate={{ opacity: isDragging ? 0.45 : 1, scale: 1 }}
       exit={ghost ? { opacity: 0, scale: 0.86 } : { opacity: 0 }}
       transition={ghost ? pop : { duration: 0.12 }}
-      className={cn("activity-chip", (isDragging || dragging) && "is-dragging")}
+      className={cn("activity-chip", isDragging && "is-dragging")}
       aria-label={item.name}
       onClick={(event) => {
         event.stopPropagation();

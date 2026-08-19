@@ -54,54 +54,105 @@ export const commands = {
 };
 
 /* Types */
+/**
+ *  The generic lifecycle an Activity represents. Plugins describe what kind of
+ *  information they carry through this semantic metadata; the engine never
+ *  matches on plugin ids.
+ */
+export type ActivityLifecycle =
+  /**  A short-lived one-shot event (volume change, device connect). */
+  | "momentary"
+  /**
+   *  Persistent state that stays relevant until dismissed (now playing,
+   *  idle clock).
+   */
+  | "ongoing"
+  /**  An operation that advances over time (transfer, install). */
+  | "progress"
+  /**  A deadline / countdown whose urgency rises as it approaches. */
+  | "countdown"
+  /**  A result that finished (timer completed, screenshot saved). */
+  | "completion"
+  /**  Something that needs attention now (alarm, alert). */
+  | "alert";
+
+/**
+ *  The semantic descriptor of one Activity. Activities *exist* here regardless
+ *  of whether they are currently drawn; presentation is decided downstream by
+ *  the composition engine.
+ */
 export type ActivitySnapshot =
   | ActivitySnapshot_Serialize
   | ActivitySnapshot_Deserialize;
 
+/**
+ *  The semantic descriptor of one Activity. Activities *exist* here regardless
+ *  of whether they are currently drawn; presentation is decided downstream by
+ *  the composition engine.
+ */
 export type ActivitySnapshot_Deserialize = {
+  /**  Stable identity across updates. */
   activityId: string;
+  /**  Source plugin. */
   pluginId: string;
-  priority: number;
-  mode: PresentationMode;
-  lifetimeMs: number | null;
-  interruptible: boolean;
-  compact: UiNode | null;
-  peek: UiNode | null;
-  presentation: UiNode | null;
-  expanded: UiNode | null;
-  preview?: UiNode | null;
-  timestampMs?: number | null;
+  /**  Optional stable identity per logical instance. */
+  instanceId?: string | null;
+  /**  Group / coalescing identity: updates in the same group replace one slot. */
+  group?: string | null;
+  lifecycle?: ActivityLifecycle;
+  attention?: Attention_Deserialize;
   /**
-   *  Updates sharing a coalescing key replace one presentation instead of
-   *  being queued. Generic; a transient surface (for example a system volume
-   *  or device change) keeps one live presentation across many updates.
+   *  Absolute wall-clock deadline (ms since epoch). Lets the engine derive
+   *  dynamic urgency for countdowns generically.
    */
-  coalescingKey?: string | null;
-  /**  Preferred presentation width intent. Generic sizing hint. */
-  preferredSize?: PreferredSize | null;
+  deadlineMs?: number | null;
+  /**
+   *  Transient window: how long a transient presentation stays relevant after
+   *  its last update. `None` means the Activity is resident and persists.
+   */
+  lifetimeMs?: number | null;
+  /**  The compact presentation variants the engine may choose from. */
+  variants?: PresentationVariant_Deserialize[];
+  /**  The expanded face shown when the island is opened. */
+  expanded?: UiNode_Deserialize | null;
+  /**  Small widget preview for the home customization surface. */
+  preview?: UiNode_Deserialize | null;
+  timestampMs?: number | null;
 };
 
+/**
+ *  The semantic descriptor of one Activity. Activities *exist* here regardless
+ *  of whether they are currently drawn; presentation is decided downstream by
+ *  the composition engine.
+ */
 export type ActivitySnapshot_Serialize = {
+  /**  Stable identity across updates. */
   activityId: string;
+  /**  Source plugin. */
   pluginId: string;
-  priority: number;
-  mode: PresentationMode;
-  lifetimeMs: number | null;
-  interruptible: boolean;
-  compact: UiNode | null;
-  peek: UiNode | null;
-  presentation: UiNode | null;
-  expanded: UiNode | null;
-  preview: UiNode | null;
-  timestampMs: number | null;
+  /**  Optional stable identity per logical instance. */
+  instanceId?: string | null;
+  /**  Group / coalescing identity: updates in the same group replace one slot. */
+  group?: string | null;
+  lifecycle: ActivityLifecycle;
+  attention: Attention_Serialize;
   /**
-   *  Updates sharing a coalescing key replace one presentation instead of
-   *  being queued. Generic; a transient surface (for example a system volume
-   *  or device change) keeps one live presentation across many updates.
+   *  Absolute wall-clock deadline (ms since epoch). Lets the engine derive
+   *  dynamic urgency for countdowns generically.
    */
-  coalescingKey?: string | null;
-  /**  Preferred presentation width intent. Generic sizing hint. */
-  preferredSize?: PreferredSize | null;
+  deadlineMs?: number | null;
+  /**
+   *  Transient window: how long a transient presentation stays relevant after
+   *  its last update. `None` means the Activity is resident and persists.
+   */
+  lifetimeMs?: number | null;
+  /**  The compact presentation variants the engine may choose from. */
+  variants: PresentationVariant_Serialize[];
+  /**  The expanded face shown when the island is opened. */
+  expanded?: UiNode_Serialize | null;
+  /**  Small widget preview for the home customization surface. */
+  preview?: UiNode_Serialize | null;
+  timestampMs: number | null;
 };
 
 export type Align = "center" | "start" | "end" | "stretch";
@@ -119,7 +170,116 @@ export type AppSettings = {
   layout: HomeLayout;
   pluginSettings: { [key in string]: { [key in string]: JsonValue } };
   idleProvider?: IdleProvider;
+  composition?: CompositionPreference;
+  clock?: ClockSettings;
 };
+
+/**
+ *  Generic attention characteristics. These are distinct semantic dimensions,
+ *  not one priority integer: a volume bump is high-urgency / low-persistence,
+ *  a timer is moderate-urgency / high-persistence, now playing is
+ *  low-urgency / high-context.
+ */
+export type Attention = Attention_Serialize | Attention_Deserialize;
+
+/**
+ *  Generic attention characteristics. These are distinct semantic dimensions,
+ *  not one priority integer: a volume bump is high-urgency / low-persistence,
+ *  a timer is moderate-urgency / high-persistence, now playing is
+ *  low-urgency / high-context.
+ */
+export type Attention_Deserialize = {
+  /**  Base importance 0..1. */
+  importance?: number | null;
+  /**  Base urgency 0..1 at publish time. */
+  urgency?: number | null;
+  /**
+   *  How long (ms) the Activity stays relevant after its last update.
+   *  `None` means it is resident and never freshness-expires on its own.
+   */
+  freshnessMs?: number | null;
+  /**
+   *  Window (ms) before `deadline_ms` during which urgency ramps from
+   *  `urgency` toward 1.0. Generic: only meaningful when a deadline exists.
+   *  The plugin expresses its own semantic progression; the engine derives
+   *  the curve from these generic fields.
+   */
+  urgencyWindowMs?: number | null;
+  /**  Long-term value 0..1 — how worth keeping resident this information is. */
+  persistence?: number | null;
+  /**  Whether the Activity can be removed from the composition cheaply. */
+  interruptible?: boolean;
+  /**
+   *  Whether the Activity is suitable to take over the whole island
+   *  temporarily (transients like volume, timer completion).
+   */
+  takeoverSuitable?: boolean;
+};
+
+/**
+ *  Generic attention characteristics. These are distinct semantic dimensions,
+ *  not one priority integer: a volume bump is high-urgency / low-persistence,
+ *  a timer is moderate-urgency / high-persistence, now playing is
+ *  low-urgency / high-context.
+ */
+export type Attention_Serialize = {
+  /**  Base importance 0..1. */
+  importance: number | null;
+  /**  Base urgency 0..1 at publish time. */
+  urgency: number | null;
+  /**
+   *  How long (ms) the Activity stays relevant after its last update.
+   *  `None` means it is resident and never freshness-expires on its own.
+   */
+  freshnessMs?: number | null;
+  /**
+   *  Window (ms) before `deadline_ms` during which urgency ramps from
+   *  `urgency` toward 1.0. Generic: only meaningful when a deadline exists.
+   *  The plugin expresses its own semantic progression; the engine derives
+   *  the curve from these generic fields.
+   */
+  urgencyWindowMs?: number | null;
+  /**  Long-term value 0..1 — how worth keeping resident this information is. */
+  persistence: number | null;
+  /**  Whether the Activity can be removed from the composition cheaply. */
+  interruptible: boolean;
+  /**
+   *  Whether the Activity is suitable to take over the whole island
+   *  temporarily (transients like volume, timer completion).
+   */
+  takeoverSuitable: boolean;
+};
+
+export type ClockMotion = "tick" | "smooth";
+
+export type ClockSettings = {
+  showSeconds?: boolean;
+  motion?: ClockMotion;
+};
+
+export type CompositionPreference =
+  /**  The engine decides how much information to show automatically. */
+  | "auto"
+  /**  Prefer less information: strong width pressure, few segments. */
+  | "minimal"
+  /**  Prefer more information: relaxed width pressure, richer variants. */
+  | "rich";
+
+/**
+ *  Semantic presentation density. Names are not pixel widths; they are
+ *  information-density levels the engine trades off against space.
+ */
+export type Density =
+  /**  A single indicator (icon, dot). */
+  | "micro"
+  /**  One compact datum (a short number or name). */
+  | "small"
+  /**  A small composed unit (icon + datum). */
+  | "compact"
+  /**  A richer unit (icon + label + secondary detail). */
+  | "richCompact"
+  /**  The expanded face. */
+  | "expanded";
 
 export type HomeLayout = {
   items: string[];
@@ -136,14 +296,12 @@ export type IslandState = IslandState_Serialize | IslandState_Deserialize;
 export type IslandState_Deserialize = {
   presence: Presence;
   sticky: boolean;
-  activity: ActivitySnapshot_Deserialize | null;
   activities: ActivitySnapshot_Deserialize[];
 };
 
 export type IslandState_Serialize = {
   presence: Presence;
   sticky: boolean;
-  activity: ActivitySnapshot_Serialize | null;
   activities: ActivitySnapshot_Serialize[];
 };
 
@@ -229,23 +387,61 @@ export type PluginRecord = {
   state: PluginLifecycle;
 };
 
-/**
- *  How wide the island should prefer to be for this activity. The renderer
- *  stays authoritative over final geometry; plugins only describe intent.
- */
-export type PreferredSize =
-  /**  Content-driven within the standard face bounds. */
-  | "auto"
-  /**  Small, clock-like surfaces. */
-  | "compact"
-  /**  Medium-wide surfaces such as level meters. */
-  | "medium"
-  /**  Wide surfaces such as player chrome. */
-  | "wide";
-
 export type Presence = "resting" | "peek" | "presentation" | "expanded";
 
-export type PresentationMode = "compact" | "peek" | "presentation" | "expanded";
+/**
+ *  One presentation variant of an Activity: a declarative UI node plus the
+ *  metadata the composition engine needs to reason about its cost and value.
+ */
+export type PresentationVariant =
+  | PresentationVariant_Serialize
+  | PresentationVariant_Deserialize;
+
+/**
+ *  One presentation variant of an Activity: a declarative UI node plus the
+ *  metadata the composition engine needs to reason about its cost and value.
+ */
+export type PresentationVariant_Deserialize = {
+  density: Density;
+  node?: UiNode_Deserialize | null;
+  minWidth?: number;
+  preferredWidth: number;
+  maxWidth?: number | null;
+  /**  Information utility 0..1 for this density. */
+  utility?: number | null;
+  /**  How long this variant must stay readable before it may swap. */
+  minReadableMs?: number | null;
+  /**
+   *  Whether this variant may sit next to other segments. `false` means it
+   *  must be the only thing on the face.
+   */
+  coexist?: boolean;
+  /**  Optional human label for diagnostics only. */
+  label?: string | null;
+};
+
+/**
+ *  One presentation variant of an Activity: a declarative UI node plus the
+ *  metadata the composition engine needs to reason about its cost and value.
+ */
+export type PresentationVariant_Serialize = {
+  density: Density;
+  node: UiNode_Serialize | null;
+  minWidth: number;
+  preferredWidth: number;
+  maxWidth?: number | null;
+  /**  Information utility 0..1 for this density. */
+  utility: number | null;
+  /**  How long this variant must stay readable before it may swap. */
+  minReadableMs?: number | null;
+  /**
+   *  Whether this variant may sit next to other segments. `false` means it
+   *  must be the only thing on the face.
+   */
+  coexist: boolean;
+  /**  Optional human label for diagnostics only. */
+  label?: string | null;
+};
 
 export type Provides = {
   activity?: boolean;
@@ -336,35 +532,1145 @@ export type ThemeTokens = {
   radius?: number | null;
 };
 
-export type UiNode =
-  | { kind: "text"; text: string; variant?: TextVariant }
-  | { kind: "secondaryText"; text: string }
-  | { kind: "icon"; name: string }
-  | { kind: "image"; src: string; alt?: string }
-  | { kind: "artwork"; src: string; alt?: string }
-  | { kind: "button"; id: string; label?: string; icon?: string | null }
-  | {
+export type UiNode = UiNode_Serialize | UiNode_Deserialize;
+
+export type UiNode_Deserialize =
+  | ({ kind: "text"; text: string; variant?: TextVariant } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+    })
+  | ({ kind: "secondaryText"; text: string } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "icon"; name: string } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "image"; src: string; alt?: string } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "artwork"; src: string; alt?: string } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "button"; id: string; label?: string; icon?: string | null } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({
       kind: "iconButton";
       id: string;
       icon: string;
       label?: string;
       size?: string | null;
-    }
-  | { kind: "progress"; value: number | null; max?: number | null }
-  | {
+    } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "progress"; value: number | null; max?: number | null } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({
+      kind: "countdown";
+      /**
+       *  Absolute wall-clock deadline (ms since epoch). The frontend
+       *  interpolates locally between authoritative sync points.
+       */
+      deadlineMs: number | null;
+      /**  Whether the countdown is actively running. */
+      running?: boolean;
+      /**  Remaining time when paused (ms). */
+      pausedRemainingMs?: number | null;
+      /**  Total duration for progress context (ms). */
+      totalMs?: number | null;
+    } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      positionMs?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({
+      kind: "ruler";
+      /**  Currently selected value (ms). */
+      valueMs: number | null;
+      minMs: number | null;
+      maxMs: number | null;
+      /**  Snap increment (ms). The frontend chooses adaptive tick density. */
+      snapMs?: number | null;
+      /**  Action id emitted when the value is committed. */
+      action: string;
+    } & {
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      variant?: never;
+    })
+  | ({
       kind: "seekBar";
       positionMs: number | null;
       durationMs: number | null;
       action: string;
-    }
-  | { kind: "toggle"; id: string; on: boolean; label?: string }
-  | { kind: "badge"; text: string }
-  | { kind: "separator" }
-  | { kind: "spacer"; size?: number; grow?: boolean }
-  | { kind: "waveform"; active?: boolean }
-  | { kind: "row"; children?: UiNode[]; gap?: number; align?: Align }
-  | { kind: "column"; children?: UiNode[]; gap?: number }
-  | { kind: "stack"; children?: UiNode[] };
+    } & {
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "toggle"; id: string; on: boolean; label?: string } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "badge"; text: string } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "separator" } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "spacer"; size?: number; grow?: boolean } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "waveform"; active?: boolean } & {
+      action?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({
+      kind: "row";
+      children?: UiNode_Deserialize[];
+      gap?: number;
+      align?: Align;
+    } & {
+      action?: never;
+      active?: never;
+      alt?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "column"; children?: UiNode_Deserialize[]; gap?: number } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "stack"; children?: UiNode_Deserialize[] } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    });
+
+export type UiNode_Serialize =
+  | ({ kind: "text"; text: string; variant: TextVariant } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+    })
+  | ({ kind: "secondaryText"; text: string } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "icon"; name: string } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "image"; src: string; alt: string } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "artwork"; src: string; alt: string } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "button"; id: string; label: string; icon: string | null } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({
+      kind: "iconButton";
+      id: string;
+      icon: string;
+      label: string;
+      size: string | null;
+    } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "progress"; value: number | null; max: number | null } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({
+      kind: "countdown";
+      /**
+       *  Absolute wall-clock deadline (ms since epoch). The frontend
+       *  interpolates locally between authoritative sync points.
+       */
+      deadlineMs: number | null;
+      /**  Whether the countdown is actively running. */
+      running: boolean;
+      /**  Remaining time when paused (ms). */
+      pausedRemainingMs?: number | null;
+      /**  Total duration for progress context (ms). */
+      totalMs?: number | null;
+    } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      positionMs?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({
+      kind: "ruler";
+      /**  Currently selected value (ms). */
+      valueMs: number | null;
+      minMs: number | null;
+      maxMs: number | null;
+      /**  Snap increment (ms). The frontend chooses adaptive tick density. */
+      snapMs?: number | null;
+      /**  Action id emitted when the value is committed. */
+      action: string;
+    } & {
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      variant?: never;
+    })
+  | ({
+      kind: "seekBar";
+      positionMs: number | null;
+      durationMs: number | null;
+      action: string;
+    } & {
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "toggle"; id: string; on: boolean; label: string } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "badge"; text: string } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "separator" } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "spacer"; size: number; grow: boolean } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "waveform"; active: boolean } & {
+      action?: never;
+      align?: never;
+      alt?: never;
+      children?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({
+      kind: "row";
+      children: UiNode_Serialize[];
+      gap: number;
+      align: Align;
+    } & {
+      action?: never;
+      active?: never;
+      alt?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "column"; children: UiNode_Serialize[]; gap: number } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    })
+  | ({ kind: "stack"; children: UiNode_Serialize[] } & {
+      action?: never;
+      active?: never;
+      align?: never;
+      alt?: never;
+      deadlineMs?: never;
+      durationMs?: never;
+      gap?: never;
+      grow?: never;
+      icon?: never;
+      id?: never;
+      label?: never;
+      max?: never;
+      maxMs?: never;
+      minMs?: never;
+      name?: never;
+      on?: never;
+      pausedRemainingMs?: never;
+      positionMs?: never;
+      running?: never;
+      size?: never;
+      snapMs?: never;
+      src?: never;
+      text?: never;
+      totalMs?: never;
+      value?: never;
+      valueMs?: never;
+      variant?: never;
+    });
 
 export type UpdateStatus = {
   available: boolean;

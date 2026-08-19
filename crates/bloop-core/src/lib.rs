@@ -22,7 +22,10 @@ pub use error::{EngineError, EngineResult};
 pub use events::{EngineEvent, EventBus};
 pub use metrics::{ABI_VERSION, ENGINE_VERSION, IslandMetrics, Presence};
 pub use plugins::{PluginLifecycle, PluginManager, PluginManifest, PluginRecord};
-pub use settings::{AppSettings, HomeLayout, IdleProvider, MonitorPreference, SettingsService};
+pub use settings::{
+    AppSettings, ClockMotion, ClockSettings, CompositionPreference, HomeLayout, IdleProvider,
+    MonitorPreference, SettingsService,
+};
 pub use theme::{MotionTokens, ThemeDocument, ThemeService};
 
 pub struct Engine {
@@ -86,7 +89,6 @@ impl Engine {
         IslandState {
             presence: view.presence,
             sticky: view.sticky,
-            activity: view.activity,
             activities: self.activities.all(),
         }
     }

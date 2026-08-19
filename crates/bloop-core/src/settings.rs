@@ -32,6 +32,18 @@ impl JsonValue {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum CompositionPreference {
+    /// The engine decides how much information to show automatically.
+    #[default]
+    Auto,
+    /// Prefer less information: strong width pressure, few segments.
+    Minimal,
+    /// Prefer more information: relaxed width pressure, richer variants.
+    Rich,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -48,6 +60,10 @@ pub struct AppSettings {
     pub plugin_settings: BTreeMap<String, BTreeMap<String, JsonValue>>,
     #[serde(default)]
     pub idle_provider: IdleProvider,
+    #[serde(default)]
+    pub composition: CompositionPreference,
+    #[serde(default)]
+    pub clock: ClockSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Type)]
@@ -72,6 +88,43 @@ impl Default for AppSettings {
             layout: HomeLayout::default(),
             plugin_settings: std::collections::BTreeMap::new(),
             idle_provider: IdleProvider::default(),
+            composition: CompositionPreference::default(),
+            clock: ClockSettings::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ClockMotion {
+    Tick,
+    Smooth,
+}
+
+impl Default for ClockMotion {
+    fn default() -> Self {
+        Self::Tick
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ClockSettings {
+    #[serde(default = "clock_seconds_default")]
+    pub show_seconds: bool,
+    #[serde(default)]
+    pub motion: ClockMotion,
+}
+
+fn clock_seconds_default() -> bool {
+    true
+}
+
+impl Default for ClockSettings {
+    fn default() -> Self {
+        Self {
+            show_seconds: true,
+            motion: ClockMotion::Tick,
         }
     }
 }

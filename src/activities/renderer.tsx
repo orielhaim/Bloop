@@ -1,4 +1,5 @@
 import {
+  Bell,
   Bluetooth,
   Gamepad2,
   Headphones,
@@ -6,18 +7,24 @@ import {
   Mouse,
   Pause,
   Play,
+  Plus,
   Repeat,
+  RotateCcw,
   Shuffle,
   SkipBack,
   SkipForward,
   Smartphone,
   Speaker,
+  Timer,
   Volume1,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { type CSSProperties, useEffect, useState } from "react";
+import { UiCountdown } from "@/components/timer/digits";
+import { WheelDurationPicker } from "@/components/timer/wheel-duration";
 import { engine } from "@/lib/engine";
 import type { ActivitySnapshot, UiNode } from "@/lib/engine/types";
 import { cn } from "@/lib/utils";
@@ -29,6 +36,7 @@ const icons = {
   "skip-forward": SkipForward,
   shuffle: Shuffle,
   repeat: Repeat,
+  "rotate-ccw": RotateCcw,
   volume: Volume2,
   "volume-mid": Volume1,
   "volume-x": VolumeX,
@@ -39,6 +47,10 @@ const icons = {
   mouse: Mouse,
   gamepad: Gamepad2,
   smartphone: Smartphone,
+  timer: Timer,
+  plus: Plus,
+  x: X,
+  bell: Bell,
 };
 
 const fillTransition = {
@@ -113,13 +125,32 @@ function Node({
           />
         </span>
       );
+    case "countdown":
+      return (
+        <UiCountdown
+          deadlineMs={node.deadlineMs}
+          running={node.running ?? true}
+          pausedRemainingMs={node.pausedRemainingMs ?? null}
+          totalMs={node.totalMs ?? null}
+          onAction={onAction}
+        />
+      );
+    case "ruler":
+      return (
+        <WheelDurationPicker
+          valueMs={node.valueMs ?? 5 * 60_000}
+          minMs={node.minMs ?? 5_000}
+          maxMs={node.maxMs ?? 3 * 60 * 60 * 1000}
+          onCommit={(value) => onAction(node.action, String(value))}
+        />
+      );
     case "seekBar":
       return (
         <SeekBar
           positionMs={node.positionMs}
           durationMs={node.durationMs}
           timestampMs={snapshot.timestampMs}
-          playing={waveformActive(snapshot.expanded ?? snapshot.peek ?? node)}
+          playing={mediaPlaying(snapshot)}
           onSeek={(position) =>
             onAction(node.action, JSON.stringify({ positionMs: position }))
           }
@@ -298,9 +329,17 @@ function SeekBar({
     setScrub(null);
   }, [positionMs, timestampMs]);
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(timer);
-  }, []);
+    if (!playing || scrub != null) {
+      return;
+    }
+    let frame = 0;
+    const loop = () => {
+      setNow(Date.now());
+      frame = requestAnimationFrame(loop);
+    };
+    frame = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frame);
+  }, [playing, scrub]);
   const origin = scrub ?? positionMs;
   const elapsed = playing && scrub == null ? Math.max(0, now - timestampMs) : 0;
   const current = Math.min(durationMs, origin + elapsed);
@@ -340,6 +379,15 @@ function formatClock(ms: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function mediaPlaying(snapshot: ActivitySnapshot): boolean {
+  if (waveformActive(snapshot.expanded) || waveformActive(snapshot.preview)) {
+    return true;
+  }
+  return (snapshot.variants ?? []).some((variant) =>
+    waveformActive(variant.node),
+  );
+}
+
 function waveformActive(node: UiNode | null | undefined): boolean {
   if (!node) {
     return false;
@@ -353,26 +401,60 @@ function waveformActive(node: UiNode | null | undefined): boolean {
   return false;
 }
 
-export function nodeForPresence(
+/** Pick the node for a given density from an Activity's variants. */
+export function variantNode(
   snapshot: ActivitySnapshot | null,
-  presence:
-    | ActivitySnapshot["mode"]
-    | "resting"
-    | "expanded"
-    | "peek"
-    | "presentation",
-) {
+  density: "micro" | "small" | "compact" | "richCompact" | "expanded",
+): UiNode | null {
   if (!snapshot) {
     return null;
   }
-  if (presence === "expanded") {
-    return snapshot.expanded ?? snapshot.peek ?? snapshot.compact;
+  if (density === "expanded") {
+    return snapshot.expanded ?? null;
   }
-  if (presence === "presentation") {
-    return snapshot.presentation ?? snapshot.peek ?? snapshot.compact;
+  const variant = (snapshot.variants ?? []).find(
+    (item) => item.density === density,
+  );
+  return variant?.node ?? null;
+}
+
+export function findUiNode(
+  node: UiNode | null | undefined,
+  kind: UiNode["kind"],
+): UiNode | null {
+  if (!node) {
+    return null;
   }
-  if (presence === "peek") {
-    return snapshot.peek ?? snapshot.compact;
+  if (node.kind === kind) {
+    return node;
   }
-  return snapshot.compact ?? snapshot.peek;
+  if ("children" in node) {
+    for (const child of node.children ?? []) {
+      const found = findUiNode(child, kind);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return null;
+}
+
+/** Prefer the richest available compact node for previews/home cards. */
+export function previewNode(snapshot: ActivitySnapshot | null): UiNode | null {
+  if (!snapshot) {
+    return null;
+  }
+  const order: Array<"richCompact" | "compact" | "small" | "micro"> = [
+    "richCompact",
+    "compact",
+    "small",
+    "micro",
+  ];
+  for (const density of order) {
+    const node = variantNode(snapshot, density);
+    if (node) {
+      return node;
+    }
+  }
+  return snapshot.preview ?? null;
 }

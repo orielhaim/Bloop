@@ -1,21 +1,14 @@
-import { motion } from "motion/react";
-import { ActivityView, nodeForPresence } from "@/activities/renderer";
+import { ActivityView, previewNode } from "@/activities/renderer";
+import { TimeReadout } from "@/components/clock/time-readout";
 import { type CatalogItem, catalogItem } from "@/lib/engine/layout";
 import type {
   ActivitySnapshot,
+  ClockSettings,
   IdleProvider,
   Presence,
 } from "@/lib/engine/types";
 import { cn } from "@/lib/utils";
-import { formatIdleDate, formatIdleTime, useClock } from "./clock";
-
-const dateEase = [0.22, 1, 0.36, 1] as const;
-
-export function occupiesIslandFace(
-  activity: ActivitySnapshot | null | undefined,
-) {
-  return Boolean(activity?.peek) || activity?.mode === "presentation";
-}
+import { formatIdleDate, useClock, wallParts } from "./clock";
 
 export function activitiesFromEnabledPlugins(
   activities: ActivitySnapshot[],
@@ -30,32 +23,6 @@ export function activitiesFromEnabledPlugins(
   return activities.filter((activity) => enabled.has(activity.pluginId));
 }
 
-export function retainOccupant(
-  previous: ActivitySnapshot | null,
-  current: ActivitySnapshot | null,
-  activities: ActivitySnapshot[],
-): ActivitySnapshot | null {
-  if (occupiesIslandFace(current) && current) {
-    return current;
-  }
-  if (!previous || !occupiesIslandFace(previous)) {
-    return occupiesIslandFace(current) ? current : null;
-  }
-  const listed = activities.find(
-    (activity) => activity.activityId === previous.activityId,
-  );
-  if (!listed || !occupiesIslandFace(listed)) {
-    return null;
-  }
-  return {
-    ...previous,
-    ...listed,
-    peek: listed.peek ?? previous.peek,
-    presentation: listed.presentation ?? previous.presentation,
-    mode: listed.mode === "presentation" ? listed.mode : "peek",
-  };
-}
-
 export function idleFaceKey(
   provider: IdleProvider,
   activities: ActivitySnapshot[],
@@ -65,7 +32,7 @@ export function idleFaceKey(
   }
   if (provider.kind === "media") {
     const snapshot = activities.find(
-      (activity) => activity.peek || activity.compact,
+      (activity) => activity.variants.length > 0,
     );
     return snapshot ? `idle:media:${snapshot.activityId}` : "idle:media";
   }
@@ -75,12 +42,14 @@ export function idleFaceKey(
 export function IdleFace({
   presence,
   provider,
+  clock,
   activities,
   catalog,
-  reduced = false,
+  reduced: _reduced = false,
 }: {
   presence: Presence;
   provider: IdleProvider;
+  clock: ClockSettings;
   activities: ActivitySnapshot[];
   catalog: CatalogItem[];
   reduced?: boolean;
@@ -93,12 +62,8 @@ export function IdleFace({
       provider.kind === "plugin"
         ? (activities.find((activity) => activity.pluginId === provider.id) ??
           null)
-        : (activities.find((activity) => activity.peek || activity.compact) ??
-          null);
-    const node = nodeForPresence(
-      snapshot,
-      presence === "peek" ? "peek" : "resting",
-    );
+        : (activities.find((activity) => activity.variants.length > 0) ?? null);
+    const node = previewNode(snapshot);
     if (snapshot && node) {
       return (
         <div
@@ -122,33 +87,29 @@ export function IdleFace({
     }
     return <div className="face-idle is-empty" />;
   }
-  return <ClockIdle peek={presence === "peek"} reduced={reduced} />;
+  return <ClockIdle peek={presence === "peek"} clock={clock} />;
 }
 
-function ClockIdle({ peek, reduced }: { peek: boolean; reduced: boolean }) {
+function ClockIdle({ peek, clock }: { peek: boolean; clock: ClockSettings }) {
   const now = useClock();
-  const transition = reduced
-    ? { duration: 0 }
-    : {
-        duration: peek ? 0.38 : 0.2,
-        ease: dateEase,
-      };
+  const parts = wallParts(now);
   return (
     <div className={cn("face-idle is-clock", peek && "is-peek")}>
-      <span className="idle-time">{formatIdleTime(now)}</span>
-      <motion.div
-        className="idle-date-slot"
-        initial={false}
-        animate={{
-          gridTemplateRows: peek ? "1fr" : "0fr",
-          opacity: peek ? 1 : 0,
-        }}
-        transition={transition}
-      >
+      <TimeReadout
+        className="idle-time"
+        hours={parts.hours}
+        minutes={parts.minutes}
+        seconds={parts.seconds}
+        showHours
+        showSeconds={clock.showSeconds}
+        padHours
+        motion={clock.motion}
+      />
+      <div className="idle-date-slot">
         <div className="idle-date-clip">
           <span className="idle-date">{formatIdleDate(now)}</span>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }

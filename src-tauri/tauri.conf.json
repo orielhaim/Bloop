@@ -27,6 +27,7 @@
         "center": false,
         "focus": false,
         "visible": false,
+        "backgroundThrottling": "disabled",
         "backgroundColor": [0, 0, 0, 0]
       }
     ],

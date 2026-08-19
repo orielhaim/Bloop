@@ -1,0 +1,50 @@
+id = "bloop.activity.timer"
+name = "Timer"
+version = "1.0.0"
+api_version = "1"
+author = "Bloop"
+description = "A countdown timer with a precision duration picker."
+entry = "component.wasm"
+enabled_by_default = true
+icon = "assets/icon.svg"
+
+[provides]
+activity = true
+theme = false
+
+[permissions]
+storage = true
+
+[[settings_schema]]
+type = "boolean"
+key = "showSeconds"
+label = "Show seconds"
+description = "Include seconds in the compact countdown when under one hour."
+default = true
+
+[[settings_schema]]
+type = "boolean"
+key = "autoRestart"
+label = "Restart when finished"
+description = "Immediately restart the timer at its previous duration."
+default = false
+
+[[settings_schema]]
+type = "slider"
+key = "defaultMinutes"
+label = "Default duration"
+description = "Preselected duration in minutes when the timer opens."
+min = 1.0
+max = 120.0
+step = 1.0
+default = 5.0
+
+[[settings_schema]]
+type = "slider"
+key = "completionMs"
+label = "Completion attention"
+description = "How long the finished state stays prominent."
+min = 1500.0
+max = 12000.0
+step = 500.0
+default = 6000.0
